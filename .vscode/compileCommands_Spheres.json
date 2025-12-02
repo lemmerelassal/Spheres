@@ -1,0 +1,154 @@
+[
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Plugins\\CustomEditorTools\\Source\\CustomEditorTools\\CustomEditorTools.Build.cs",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\CustomEditorTools.45.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Plugins\\CustomEditorTools\\Source\\CustomEditorTools\\Private\\CustomEditorTools.cpp",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\CustomEditorTools.45.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Plugins\\CustomEditorTools\\Source\\CustomEditorTools\\Private\\CustomEditorToolsCommands.cpp",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\CustomEditorTools.45.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Plugins\\CustomEditorTools\\Source\\CustomEditorTools\\Private\\CustomEditorToolsStyle.cpp",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\CustomEditorTools.45.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Plugins\\CustomEditorTools\\Source\\CustomEditorTools\\Public\\CustomEditorTools.h",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\CustomEditorTools.45.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Plugins\\CustomEditorTools\\Source\\CustomEditorTools\\Public\\CustomEditorToolsCommands.h",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\CustomEditorTools.45.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Plugins\\CustomEditorTools\\Source\\CustomEditorTools\\Public\\CustomEditorToolsStyle.h",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\CustomEditorTools.45.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\BlueSphere.cpp",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\BlueSphere.h",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\MoleculeToolbar.cpp",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\MoleculeToolbar.h",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\OrbitCameraPawn.cpp",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\OrbitCameraPawn.h",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\SMyToolbar.cpp",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\SMyToolbar.h",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\Spheres.Build.cs",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\Spheres.cpp",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\Spheres.h",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	},
+	{
+		"file": "D:\\UnrealEngine\\Spheres\\Source\\Spheres\\SpheresModule.cpp",
+		"arguments": [
+			"C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe",
+			"@D:\\UnrealEngine\\Spheres\\.vscode\\compileCommands_Spheres\\Spheres.1.rsp"
+		],
+		"directory": "C:\\Program Files\\Epic Games\\UE_5.6\\Engine\\Source"
+	}
+]
