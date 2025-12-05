@@ -20,6 +20,13 @@ public:
 
     void LoadMoleculeFromJSON(const FString& FilePath);
 
+    
+    // Methods to show/hide residues
+    void ToggleResidueVisibility(bool bVisible);
+
+    
+    // Getter for AtomSpheres
+    TArray<UStaticMeshComponent*>& GetAtomSpheres() { return AtomSpheres; }
 
 
 
@@ -41,4 +48,8 @@ private:
 
     UPROPERTY()
     USceneComponent* RootScene;
+
+    
+    TArray<UStaticMeshComponent*> AtomSpheres;  // To hold the residue sphere components
+    TArray<UStaticMeshComponent*> BondCylinders; // To hold the bond cylinder components
 };

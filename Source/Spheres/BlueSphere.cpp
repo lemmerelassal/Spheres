@@ -1,6 +1,11 @@
 
 // BlueSphere.cpp
 
+
+
+#include "ResidueVisibilityWidget.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
+
 #include "DrawDebugHelpers.h"  // Needed for DrawDebugLine
 
 #include "BlueSphere.h"
@@ -33,6 +38,7 @@ ABlueSphere::ABlueSphere()
     RootComponent = RootScene;
 }
 
+
 void ABlueSphere::BeginPlay()
 {
     Super::BeginPlay();
@@ -41,6 +47,13 @@ void ABlueSphere::BeginPlay()
 
     FString JSONPath = TEXT("D:/Golang/pdbParserFinal/5ENB.json");
     LoadMoleculeFromJSON(JSONPath);
+
+    // Create and display the widget
+    TSharedPtr<FResidueVisibilityWidget> ResidueWidget = SNew(FResidueVisibilityWidget)
+        .BlueSphere(this);
+
+    // Add widget to the viewport (Directly without SWeakWidget)
+    GEngine->GameViewport->AddViewportWidgetContent(ResidueWidget.ToSharedRef());
 }
 
 void ABlueSphere::LoadMoleculeFromJSON(const FString& FilePath)
@@ -156,6 +169,9 @@ void ABlueSphere::DrawSphere(float x, float y, float z, const FLinearColor& Colo
     Mat->SetScalarParameterValue(FName("EmissiveIntensity"), 5.f);
 
     Sphere->SetMaterial(0, Mat);
+
+    // Store the sphere in the AtomSpheres array
+    AtomSpheres.Add(Sphere);
 }
 
 
@@ -196,6 +212,30 @@ void ABlueSphere::DrawBond(const FVector& Start, const FVector& End, int32 Order
         UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
         Mat->SetVectorParameterValue("Color", Color);
         Cylinder->SetMaterial(0, Mat);
+
+        // Store the bond cylinder in the BondCylinders array
+        BondCylinders.Add(Cylinder);
+    }
+}
+
+void ABlueSphere::ToggleResidueVisibility(bool bVisible)
+{
+    // Toggle the visibility of spheres
+    for (UStaticMeshComponent* Sphere : AtomSpheres)
+    {
+        if (Sphere)
+        {
+            Sphere->SetVisibility(bVisible);
+        }
+    }
+
+    // Toggle the visibility of bond cylinders
+    for (UStaticMeshComponent* Cylinder : BondCylinders)
+    {
+        if (Cylinder)
+        {
+            Cylinder->SetVisibility(bVisible);
+        }
     }
 }
 
