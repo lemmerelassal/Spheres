@@ -4,6 +4,21 @@
 #include "GameFramework/Actor.h"
 #include "BlueSphere.generated.h"
 
+USTRUCT()
+struct FResidueData
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    FString ResidueName;
+
+    UPROPERTY()
+    TArray<UStaticMeshComponent*> AtomSpheres;
+
+    UPROPERTY()
+    TArray<UStaticMeshComponent*> BondCylinders;
+};
+
 UCLASS()
 class SPHERES_API ABlueSphere : public AActor
 {
@@ -20,23 +35,18 @@ public:
 
     void LoadMoleculeFromJSON(const FString& FilePath);
 
-    
-    // Methods to show/hide residues
-    void ToggleResidueVisibility(bool bVisible);
+    // Show/hide a specific residue
+    void ToggleResidueVisibility(int32 ResidueIndex, bool bVisible);
 
-    
-    // Getter for AtomSpheres
-    TArray<UStaticMeshComponent*>& GetAtomSpheres() { return AtomSpheres; }
-
-
+    // Getter
+    const TArray<FResidueData>& GetResidues() const { return Residues; }
 
 private:
-    // Sphere
-    void DrawSphere(float x, float y, float z, const FLinearColor& Color, USceneComponent* Parent);
-    void DrawBond(const FVector& Start, const FVector& End, int32 Order, const FLinearColor& Color, USceneComponent* Parent);
-
+    void DrawSphere(float x, float y, float z, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);
+    void DrawBond(const FVector& Start, const FVector& End, int32 Order, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);
     FLinearColor ElementColor(const FString& Element);
 
+private:
     UPROPERTY()
     UStaticMesh* SphereMeshAsset;
 
@@ -49,7 +59,7 @@ private:
     UPROPERTY()
     USceneComponent* RootScene;
 
-    
-    TArray<UStaticMeshComponent*> AtomSpheres;  // To hold the residue sphere components
-    TArray<UStaticMeshComponent*> BondCylinders; // To hold the bond cylinder components
+    // All residues
+    UPROPERTY()
+    TArray<FResidueData> Residues;
 };

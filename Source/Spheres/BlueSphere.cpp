@@ -91,11 +91,15 @@ void ABlueSphere::LoadMoleculeFromJSON(const FString& FilePath)
             // Residue level
             for (auto& ResPair : ChainObj->Values)
             {
+                FString ResidueName = ResPair.Key;
                 TSharedPtr<FJsonObject> ResObj = ResPair.Value->AsObject();
                 if (!ResObj.IsValid()) continue;
 
                 const TArray<TSharedPtr<FJsonValue>>* AtomsArray;
                 if (!ResObj->TryGetArrayField("atoms", AtomsArray)) continue;
+
+                FResidueData NewResidue;
+                NewResidue.ResidueName = ResidueName;
 
                 // Store atom positions for bonds
                 TArray<FVector> AtomPositions;
@@ -115,7 +119,7 @@ void ABlueSphere::LoadMoleculeFromJSON(const FString& FilePath)
                     AtomPositions.Add(Pos);
                     AtomElements.Add(Element);
 
-                    DrawSphere(Pos.X, Pos.Y, Pos.Z, ElementColor(Element), RootComponent);
+                    DrawSphere(Pos.X, Pos.Y, Pos.Z, ElementColor(Element), RootComponent, NewResidue.AtomSpheres);
                 }
 
                 // Bonds
@@ -131,16 +135,14 @@ void ABlueSphere::LoadMoleculeFromJSON(const FString& FilePath)
                         int32 To = BondObj->GetIntegerField("to");
                         int32 Order = BondObj->GetIntegerField("order");
 
-                        if(Order > 1) {
-                            UE_LOG(LogTemp, Warning, TEXT("Multiple bond orders not supported yet."));
-                        }
-
                         if (AtomPositions.IsValidIndex(From) && AtomPositions.IsValidIndex(To))
                         {
-                            DrawBond(AtomPositions[From], AtomPositions[To], Order, FLinearColor::Gray, RootComponent);
+                            DrawBond(AtomPositions[From], AtomPositions[To], Order, FLinearColor::Gray, RootComponent, NewResidue.BondCylinders);
                         }
                     }
                 }
+
+                Residues.Add(NewResidue);
             }
         }
     }
@@ -155,7 +157,8 @@ FLinearColor ABlueSphere::ElementColor(const FString& Element)
     return FLinearColor::Green;
 }
 
-void ABlueSphere::DrawSphere(float x, float y, float z, const FLinearColor& Color, USceneComponent* Parent)
+
+void ABlueSphere::DrawSphere(float x, float y, float z, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray)
 {
     UStaticMeshComponent* Sphere = NewObject<UStaticMeshComponent>(this);
     Sphere->RegisterComponent();
@@ -167,16 +170,12 @@ void ABlueSphere::DrawSphere(float x, float y, float z, const FLinearColor& Colo
     UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
     Mat->SetVectorParameterValue(FName("Color"), Color);
     Mat->SetScalarParameterValue(FName("EmissiveIntensity"), 5.f);
-
     Sphere->SetMaterial(0, Mat);
 
-    // Store the sphere in the AtomSpheres array
-    AtomSpheres.Add(Sphere);
+    OutArray.Add(Sphere);
 }
 
-
-
-void ABlueSphere::DrawBond(const FVector& Start, const FVector& End, int32 Order, const FLinearColor& Color, USceneComponent* Parent)
+void ABlueSphere::DrawBond(const FVector& Start, const FVector& End, int32 Order, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray)
 {
     FVector BondVector = End - Start;
     float Length = BondVector.Size();
@@ -185,57 +184,37 @@ void ABlueSphere::DrawBond(const FVector& Start, const FVector& End, int32 Order
 
     float DefaultHalfHeight = 50.0f;
     float ZScale = Length / (2.0f * DefaultHalfHeight);
-    float OffsetAmount = 8.0f;
-    FVector UpVector = FVector::UpVector;
-    if (FMath::Abs(FVector::DotProduct(BondVector.GetSafeNormal(), UpVector)) > 0.99f)
-        UpVector = FVector::RightVector;
-    FVector OffsetDir = FVector::CrossProduct(BondVector, UpVector).GetSafeNormal();
 
-    for (int32 i = 0; i < Order; i++)
-    {
-        FVector Offset = FVector::ZeroVector;
-        if (Order == 2)
-            Offset = OffsetDir * ((i == 0) ? OffsetAmount : -OffsetAmount);
-        else if (Order == 3)
-            Offset = OffsetDir * ((i - 1) * OffsetAmount);
+    UStaticMeshComponent* Cylinder = NewObject<UStaticMeshComponent>(this);
+    Cylinder->SetStaticMesh(CylinderMeshAsset);
+    Cylinder->SetWorldLocation(MidPoint);
+    Cylinder->SetWorldRotation(Rotation);
+    Cylinder->SetWorldScale3D(FVector(0.1f, 0.1f, ZScale));
+    Cylinder->RegisterComponent();
+    Cylinder->AttachToComponent(Parent, FAttachmentTransformRules::KeepWorldTransform);
 
-        UStaticMeshComponent* Cylinder = NewObject<UStaticMeshComponent>(this);
-        Cylinder->SetStaticMesh(CylinderMeshAsset);
-        Cylinder->SetWorldLocation(MidPoint + Offset);
-        Cylinder->SetWorldRotation(Rotation);
-        Cylinder->SetWorldScale3D(FVector(0.1f, 0.1f, ZScale));
+    UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
+    Mat->SetVectorParameterValue("Color", Color);
+    Cylinder->SetMaterial(0, Mat);
 
-        Cylinder->RegisterComponent();
-        AddInstanceComponent(Cylinder);
-        Cylinder->AttachToComponent(Parent, FAttachmentTransformRules::KeepWorldTransform);
-
-        UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
-        Mat->SetVectorParameterValue("Color", Color);
-        Cylinder->SetMaterial(0, Mat);
-
-        // Store the bond cylinder in the BondCylinders array
-        BondCylinders.Add(Cylinder);
-    }
+    OutArray.Add(Cylinder);
 }
 
-void ABlueSphere::ToggleResidueVisibility(bool bVisible)
+
+void ABlueSphere::ToggleResidueVisibility(int32 ResidueIndex, bool bVisible)
 {
-    // Toggle the visibility of spheres
-    for (UStaticMeshComponent* Sphere : AtomSpheres)
+    if (!Residues.IsValidIndex(ResidueIndex)) return;
+
+    FResidueData& Residue = Residues[ResidueIndex];
+
+    for (UStaticMeshComponent* Atom : Residue.AtomSpheres)
     {
-        if (Sphere)
-        {
-            Sphere->SetVisibility(bVisible);
-        }
+        if (Atom) Atom->SetVisibility(bVisible);
     }
 
-    // Toggle the visibility of bond cylinders
-    for (UStaticMeshComponent* Cylinder : BondCylinders)
+    for (UStaticMeshComponent* Bond : Residue.BondCylinders)
     {
-        if (Cylinder)
-        {
-            Cylinder->SetVisibility(bVisible);
-        }
+        if (Bond) Bond->SetVisibility(bVisible);
     }
 }
 

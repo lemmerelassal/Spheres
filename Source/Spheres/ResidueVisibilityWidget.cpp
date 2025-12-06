@@ -3,62 +3,70 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SScrollBox.h"
-#include "Widgets/Layout/SSpacer.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SBorder.h"
 
 void FResidueVisibilityWidget::Construct(const FArguments& InArgs)
 {
     BlueSphere = InArgs._BlueSphere;
 
-    // Create a horizontal box to hold the buttons (instead of SVerticalBox)
-    TSharedPtr<SHorizontalBox> ButtonBox = SNew(SHorizontalBox); // A horizontal box to hold buttons
+    // A horizontal box that holds the residue buttons
+    TSharedPtr<SHorizontalBox> ButtonBox = SNew(SHorizontalBox);
 
-    // Ensure we have the residues loaded from BlueSphere
     if (BlueSphere.IsValid())
     {
-        // Get the AtomSpheres array using the getter
-        TArray<UStaticMeshComponent*>& AtomSpheres = BlueSphere->GetAtomSpheres();
+        const TArray<FResidueData>& Residues = BlueSphere->GetResidues();
 
-        // Iterate through all residues (or atoms depending on the structure)
-        int32 Index = 0;
-        for (auto& Residue : AtomSpheres)
+        for (int32 i = 0; i < Residues.Num(); ++i)
         {
-            const FString ButtonText = FString::Printf(TEXT("Residue %d"), Index + 1);
+            const FString ButtonText = FString::Printf(TEXT("%s"), *Residues[i].ResidueName);
 
-            // Add a button for each residue in the horizontal box
             ButtonBox->AddSlot()
-                .AutoWidth()  // This ensures that each button is as wide as its content (no stretching)
-                [
-                    SNew(SButton)
-                    .Text(FText::FromString(ButtonText))
-                    .OnClicked(this, &FResidueVisibilityWidget::OnResidueButtonClicked, Index)
-                ];
-
-            ++Index;
+            .AutoWidth()                // Keep each button sized to content
+            .VAlign(VAlign_Center)      // Vertically center buttons
+            .Padding(4, 2)
+            [
+                SNew(SButton)
+                .Text(FText::FromString(ButtonText))
+                .ButtonColorAndOpacity(FLinearColor(0.15f, 0.15f, 0.15f, 0.9f))
+                .OnClicked(this, &FResidueVisibilityWidget::OnResidueButtonClicked, i)
+            ];
         }
     }
 
-    // Now that all buttons are added, assign the ButtonBox to the ChildSlot of the SScrollBox
+    // Wrap in a scroll box that only takes a small vertical slice at the top/bottom of the screen
     ChildSlot
     [
-        SNew(SScrollBox) // Creates a scrollable container
-        + SScrollBox::Slot()
-        .Padding(2)
+        SNew(SBorder)
+        .Padding(5)
+        .BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.4f))
         [
-            ButtonBox.ToSharedRef() // Add the horizontal box with buttons to the scroll box
+            SNew(SBox)
+            .HeightOverride(60.f) // 👈 Limit the bar height so it doesn't fill the screen
+            [
+                SNew(SScrollBox)
+                .Orientation(Orient_Horizontal)
+                .ScrollBarVisibility(EVisibility::Collapsed)
+                + SScrollBox::Slot()
+                .Padding(2)
+                [
+                    ButtonBox.ToSharedRef()
+                ]
+            ]
         ]
     ];
 }
 
 FReply FResidueVisibilityWidget::OnResidueButtonClicked(int32 ResidueIndex)
 {
-    // Handle the visibility toggle for each residue
     if (BlueSphere.IsValid())
     {
-        // Get the AtomSpheres array using the getter
-        TArray<UStaticMeshComponent*>& AtomSpheres = BlueSphere->GetAtomSpheres();
-
-        bool bCurrentVisibility = AtomSpheres[ResidueIndex]->IsVisible();
-        AtomSpheres[ResidueIndex]->SetVisibility(!bCurrentVisibility);
+        const TArray<FResidueData>& Residues = BlueSphere->GetResidues();
+        if (Residues.IsValidIndex(ResidueIndex) && Residues[ResidueIndex].AtomSpheres.Num() > 0)
+        {
+            bool bCurrentVisibility = Residues[ResidueIndex].AtomSpheres[0]->IsVisible();
+            BlueSphere->ToggleResidueVisibility(ResidueIndex, !bCurrentVisibility);
+        }
     }
 
     return FReply::Handled();
