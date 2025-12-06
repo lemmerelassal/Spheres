@@ -5,12 +5,14 @@
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
+#include "Widgets/SBoxPanel.h"  // contains SVerticalBox and SHorizontalBox
+#include "Widgets/Layout/SSpacer.h"
 
 void FResidueVisibilityWidget::Construct(const FArguments& InArgs)
 {
     BlueSphere = InArgs._BlueSphere;
 
-    // A horizontal box that holds the residue buttons
+    // Horizontal box for residue buttons
     TSharedPtr<SHorizontalBox> ButtonBox = SNew(SHorizontalBox);
 
     if (BlueSphere.IsValid())
@@ -22,8 +24,8 @@ void FResidueVisibilityWidget::Construct(const FArguments& InArgs)
             const FString ButtonText = FString::Printf(TEXT("%s"), *Residues[i].ResidueName);
 
             ButtonBox->AddSlot()
-            .AutoWidth()                // Keep each button sized to content
-            .VAlign(VAlign_Center)      // Vertically center buttons
+            .AutoWidth()
+            .VAlign(VAlign_Center)
             .Padding(4, 2)
             [
                 SNew(SButton)
@@ -34,25 +36,40 @@ void FResidueVisibilityWidget::Construct(const FArguments& InArgs)
         }
     }
 
-    // Wrap in a scroll box that only takes a small vertical slice at the top/bottom of the screen
+    // ✅ Wrap in a vertical box so the bar stays at the top
     ChildSlot
     [
-        SNew(SBorder)
-        .Padding(5)
-        .BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.4f))
+        SNew(SVerticalBox)
+
+        // The toolbar at the top
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .VAlign(VAlign_Top)
         [
-            SNew(SBox)
-            .HeightOverride(60.f) // 👈 Limit the bar height so it doesn't fill the screen
+            SNew(SBorder)
+            .Padding(5)
+            .BorderBackgroundColor(FLinearColor(0.f, 0.f, 0.f, 0.4f))
             [
-                SNew(SScrollBox)
-                .Orientation(Orient_Horizontal)
-                .ScrollBarVisibility(EVisibility::Collapsed)
-                + SScrollBox::Slot()
-                .Padding(2)
+                SNew(SBox)
+                .HeightOverride(60.f)
                 [
-                    ButtonBox.ToSharedRef()
+                    SNew(SScrollBox)
+                    .Orientation(Orient_Horizontal)
+                    .ScrollBarVisibility(EVisibility::Collapsed)
+                    + SScrollBox::Slot()
+                    .Padding(2)
+                    [
+                        ButtonBox.ToSharedRef()
+                    ]
                 ]
             ]
+        ]
+
+        // Spacer to push everything else down (fills remaining space)
+        + SVerticalBox::Slot()
+        .FillHeight(1.0f)
+        [
+            SNew(SSpacer)
         ]
     ];
 }
