@@ -41,14 +41,22 @@ void FLigandVisibilityWidget::Construct(const FArguments& InArgs)
         }
     }
 
-    // ✅ Wrap in a vertical box so the bar stays at the top
+    // ✅ Wrap in a vertical box so the bar stays at the bottom
     ChildSlot
     [
         SNew(SVerticalBox)
 
+        // Spacer to push scroll box down
+        + SVerticalBox::Slot()
+        .FillHeight(1.0f)
+        [
+            SNew(SSpacer)
+        ]
+
+        // Scroll box with buttons at the bottom
         + SVerticalBox::Slot()
         .AutoHeight()
-        .VAlign(VAlign_Top)
+        .VAlign(VAlign_Bottom)
         [
             SNew(SBorder)
             .Padding(5)
@@ -67,12 +75,6 @@ void FLigandVisibilityWidget::Construct(const FArguments& InArgs)
                     ]
                 ]
             ]
-        ]
-
-        + SVerticalBox::Slot()
-        .FillHeight(1.0f)
-        [
-            SNew(SSpacer)
         ]
     ];
 }

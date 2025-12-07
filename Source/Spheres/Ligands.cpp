@@ -37,7 +37,7 @@ void ALigands::BeginPlay()
 
     SetActorLocation(FVector::ZeroVector);
 
-    FString JSONPath = TEXT("D:/Golang/pdbParserFinal/5ENB.json");
+    FString JSONPath = TEXT("D:/Golang/pdb-group-parser/ligands.json");
     LoadMoleculeFromJSON(JSONPath);
 
     // Create and display the widget
@@ -73,45 +73,35 @@ void ALigands::LoadMoleculeFromJSON(const FString& FilePath)
         TSharedPtr<FJsonObject> PDBObj = PDBPair.Value->AsObject();
         if (!PDBObj.IsValid()) continue;
 
-        // Chain level
-        for (auto& ChainPair : PDBObj->Values)
+        // Some ID level (like "5S8M")
+        for (auto& IDPair : PDBObj->Values)
         {
-            TSharedPtr<FJsonObject> ChainObj = ChainPair.Value->AsObject();
-            if (!ChainObj.IsValid()) continue;
+            TSharedPtr<FJsonObject> IDObj = IDPair.Value->AsObject();
+            if (!IDObj.IsValid()) continue;
 
-            // Ligand level
-            for (auto& LigandPair : ChainObj->Values)
+            // Chain level (like "A")
+            for (auto& ChainPair : IDObj->Values)
             {
-                TSharedPtr<FJsonObject> LigandObj = LigandPair.Value->AsObject();
-                if (!LigandObj.IsValid()) continue;
-
-                FString LigandID = LigandPair.Key;
-                FString LigandName = TEXT("Unknown");
-                if (LigandObj->HasField("resName"))
-                {
-                    LigandName = LigandObj->GetStringField("resName");
-                }
-
-                FString DisplayName = FString::Printf(TEXT("%s %s (%s)"), *ChainPair.Key, *LigandID, *LigandName);
+                const TArray<TSharedPtr<FJsonValue>>* AtomArray;
+                if (!ChainPair.Value->TryGetArray(AtomArray)) continue;
 
                 FLigandData NewLigand;
-                NewLigand.LigandName = DisplayName;
-
-                const TArray<TSharedPtr<FJsonValue>>* AtomsArray;
-                if (!LigandObj->TryGetArrayField("atoms", AtomsArray)) continue;
+                NewLigand.LigandName = FString::Printf(TEXT("%s %s (%s)"), *IDPair.Key, *ChainPair.Key, *PDBPair.Key);
 
                 TArray<FVector> AtomPositions;
                 TArray<FString> AtomElements;
 
-                for (const TSharedPtr<FJsonValue>& AtomValue : *AtomsArray)
+                for (const TSharedPtr<FJsonValue>& AtomValue : *AtomArray)
                 {
                     TSharedPtr<FJsonObject> AtomObj = AtomValue->AsObject();
                     if (!AtomObj.IsValid()) continue;
 
-                    FString Element = AtomObj->GetStringField("element");
-                    double X = AtomObj->GetNumberField("x");
-                    double Y = AtomObj->GetNumberField("y");
-                    double Z = AtomObj->GetNumberField("z");
+                    FString Element = AtomObj->GetStringField("hetatm_name");
+
+                    TSharedPtr<FJsonObject> PosObj = AtomObj->GetObjectField("position");
+                    double X = PosObj->GetNumberField("X");
+                    double Y = PosObj->GetNumberField("Y");
+                    double Z = PosObj->GetNumberField("Z");
 
                     FVector Pos = FVector(X * Scale, Y * Scale, Z * Scale);
                     AtomPositions.Add(Pos);
@@ -120,25 +110,7 @@ void ALigands::LoadMoleculeFromJSON(const FString& FilePath)
                     DrawSphere(Pos.X, Pos.Y, Pos.Z, ElementColor(Element), RootComponent, NewLigand.AtomSpheres);
                 }
 
-                // Bonds
-                const TArray<TSharedPtr<FJsonValue>>* BondsArray;
-                if (LigandObj->TryGetArrayField("bonds", BondsArray))
-                {
-                    for (const TSharedPtr<FJsonValue>& BondValue : *BondsArray)
-                    {
-                        TSharedPtr<FJsonObject> BondObj = BondValue->AsObject();
-                        if (!BondObj.IsValid()) continue;
-
-                        int32 From = BondObj->GetIntegerField("from");
-                        int32 To = BondObj->GetIntegerField("to");
-                        int32 Order = BondObj->GetIntegerField("order");
-
-                        if (AtomPositions.IsValidIndex(From) && AtomPositions.IsValidIndex(To))
-                        {
-                            DrawBond(AtomPositions[From], AtomPositions[To], Order, FLinearColor::Gray, RootComponent, NewLigand.BondCylinders);
-                        }
-                    }
-                }
+                // Bonds handling could be added here if available
 
                 LigandsArray.Add(NewLigand);
             }
@@ -146,13 +118,39 @@ void ALigands::LoadMoleculeFromJSON(const FString& FilePath)
     }
 }
 
+
 FLinearColor ALigands::ElementColor(const FString& Element)
 {
-    if (Element == "C") return FLinearColor(0.1f, 0.1f, 0.1f);
-    if (Element == "O") return FLinearColor::Red;
-    if (Element == "H") return FLinearColor::White;
-    if (Element == "N") return FLinearColor::Blue;
-    return FLinearColor::Green;
+    if (Element.IsEmpty()) return FLinearColor::Black;
+
+TCHAR FirstChar = Element[0];
+
+
+
+    if(Element.StartsWith("CL")) return FLinearColor(0.0f, 1.0f, 0.0f);
+    if(Element.StartsWith("NA")) return FLinearColor(0.0f, 0.0f, 1.0f);
+    if(Element.StartsWith("MG")) return FLinearColor(0.0f, 0.8f, 0.0f);
+    if(Element.StartsWith("CA")) return FLinearColor(0.5f, 0.5f, 0.5f);
+    if(Element.StartsWith("FE")) return FLinearColor(0.8f, 0.4f, 0.0f);
+    if(Element.StartsWith("BR")) return FLinearColor(0.6f, 0.2f, 0.2f);
+    if(Element.StartsWith("F")) return FLinearColor(0.0f, 1.0f, 0.0f);
+    if(Element.StartsWith("I")) return FLinearColor(0.4f, 0.0f, 0.8f);
+    if(Element.StartsWith("K")) return FLinearColor(0.5f, 0.0f, 1.0f);
+    if(Element.StartsWith("ZN")) return FLinearColor(0.5f, 0.5f, 0.0f);
+    if(Element.StartsWith("CU")) return FLinearColor(0.8f, 0.5f, 0.2f);
+    if(Element.StartsWith("SE")) return FLinearColor(1.0f, 0.5f, 0.0f);
+
+    switch (FirstChar)
+    {
+    case 'C': return FLinearColor(0.1f, 0.1f, 0.1f);
+    case 'O': return FLinearColor::Red;
+    case 'H': return FLinearColor::White;
+    case 'N': return FLinearColor::Blue;
+    case 'S': return FLinearColor::Yellow;
+    case 'P': return FLinearColor(1.f, 0.5f, 0.f);
+    default:  return FLinearColor::Gray;
+    }
+
 }
 
 void ALigands::DrawSphere(float x, float y, float z, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray)
