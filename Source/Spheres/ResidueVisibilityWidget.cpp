@@ -23,16 +23,20 @@ void FResidueVisibilityWidget::Construct(const FArguments& InArgs)
         {
             const FString ButtonText = FString::Printf(TEXT("%s"), *Residues[i].ResidueName);
 
+            TSharedPtr<SButton> Button;
+
             ButtonBox->AddSlot()
             .AutoWidth()
             .VAlign(VAlign_Center)
             .Padding(4, 2)
             [
-                SNew(SButton)
+                SAssignNew(Button, SButton)
                 .Text(FText::FromString(ButtonText))
-                .ButtonColorAndOpacity(FLinearColor(0.15f, 0.15f, 0.15f, 0.9f))
+                .ButtonColorAndOpacity(this, &FResidueVisibilityWidget::GetResidueButtonColor, i)
                 .OnClicked(this, &FResidueVisibilityWidget::OnResidueButtonClicked, i)
             ];
+
+            ResidueButtons.Add(Button);
         }
     }
 
@@ -74,6 +78,22 @@ void FResidueVisibilityWidget::Construct(const FArguments& InArgs)
     ];
 }
 
+FSlateColor FResidueVisibilityWidget::GetResidueButtonColor(int32 ResidueIndex) const
+{
+    if (BlueSphere.IsValid())
+    {
+        const TArray<FResidueData>& Residues = BlueSphere->GetResidues();
+        if (Residues.IsValidIndex(ResidueIndex) && Residues[ResidueIndex].AtomSpheres.Num() > 0)
+        {
+            bool bVisible = Residues[ResidueIndex].AtomSpheres[0]->IsVisible();
+            return bVisible ? FLinearColor(0.0f, 0.2f, 1.0f, 1.0f)   // Blue when visible
+                            : FLinearColor(0.8f, 0.0f, 0.0f, 1.0f);  // Red when hidden
+        }
+    }
+
+    return FLinearColor(0.15f, 0.15f, 0.15f, 0.9f); // Default gray fallback
+}
+
 FReply FResidueVisibilityWidget::OnResidueButtonClicked(int32 ResidueIndex)
 {
     if (BlueSphere.IsValid())
@@ -83,6 +103,12 @@ FReply FResidueVisibilityWidget::OnResidueButtonClicked(int32 ResidueIndex)
         {
             bool bCurrentVisibility = Residues[ResidueIndex].AtomSpheres[0]->IsVisible();
             BlueSphere->ToggleResidueVisibility(ResidueIndex, !bCurrentVisibility);
+
+            // ✅ Refresh button color immediately
+            if (ResidueButtons.IsValidIndex(ResidueIndex) && ResidueButtons[ResidueIndex].IsValid())
+            {
+                ResidueButtons[ResidueIndex]->Invalidate(EInvalidateWidgetReason::Paint);
+            }
         }
     }
 

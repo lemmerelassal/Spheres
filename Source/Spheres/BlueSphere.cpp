@@ -1,14 +1,7 @@
-
-// BlueSphere.cpp
-
-
-
+#include "BlueSphere.h"
 #include "ResidueVisibilityWidget.h"
 #include "Blueprint/WidgetBlueprintLibrary.h"
-
-#include "DrawDebugHelpers.h"  // Needed for DrawDebugLine
-
-#include "BlueSphere.h"
+#include "DrawDebugHelpers.h"
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
@@ -38,7 +31,6 @@ ABlueSphere::ABlueSphere()
     RootComponent = RootScene;
 }
 
-
 void ABlueSphere::BeginPlay()
 {
     Super::BeginPlay();
@@ -52,7 +44,7 @@ void ABlueSphere::BeginPlay()
     TSharedPtr<FResidueVisibilityWidget> ResidueWidget = SNew(FResidueVisibilityWidget)
         .BlueSphere(this);
 
-    // Add widget to the viewport (Directly without SWeakWidget)
+    // Add widget to the viewport
     GEngine->GameViewport->AddViewportWidgetContent(ResidueWidget.ToSharedRef());
 }
 
@@ -91,15 +83,25 @@ void ABlueSphere::LoadMoleculeFromJSON(const FString& FilePath)
             // Residue level
             for (auto& ResPair : ChainObj->Values)
             {
-                FString ResidueName = ResPair.Key;
                 TSharedPtr<FJsonObject> ResObj = ResPair.Value->AsObject();
                 if (!ResObj.IsValid()) continue;
 
-                const TArray<TSharedPtr<FJsonValue>>* AtomsArray;
-                if (!ResObj->TryGetArrayField("atoms", AtomsArray)) continue;
+                // Get residue ID (key) and actual residue name from JSON
+                FString ResID = ResPair.Key;
+                FString ResName = TEXT("Unknown");
+                if (ResObj->HasField("resName"))
+                {
+                    ResName = ResObj->GetStringField("resName");
+                }
+
+                // Combine chain, residue number, and residue name
+                FString DisplayName = FString::Printf(TEXT("%s %s (%s)"), *ChainPair.Key, *ResID, *ResName);
 
                 FResidueData NewResidue;
-                NewResidue.ResidueName = ResidueName;
+                NewResidue.ResidueName = DisplayName;
+
+                const TArray<TSharedPtr<FJsonValue>>* AtomsArray;
+                if (!ResObj->TryGetArrayField("atoms", AtomsArray)) continue;
 
                 // Store atom positions for bonds
                 TArray<FVector> AtomPositions;
@@ -157,7 +159,6 @@ FLinearColor ABlueSphere::ElementColor(const FString& Element)
     return FLinearColor::Green;
 }
 
-
 void ABlueSphere::DrawSphere(float x, float y, float z, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray)
 {
     UStaticMeshComponent* Sphere = NewObject<UStaticMeshComponent>(this);
@@ -200,7 +201,6 @@ void ABlueSphere::DrawBond(const FVector& Start, const FVector& End, int32 Order
     OutArray.Add(Cylinder);
 }
 
-
 void ABlueSphere::ToggleResidueVisibility(int32 ResidueIndex, bool bVisible)
 {
     if (!Residues.IsValidIndex(ResidueIndex)) return;
@@ -217,8 +217,6 @@ void ABlueSphere::ToggleResidueVisibility(int32 ResidueIndex, bool bVisible)
         if (Bond) Bond->SetVisibility(bVisible);
     }
 }
-
-
 
 void ABlueSphere::Tick(float DeltaTime)
 {

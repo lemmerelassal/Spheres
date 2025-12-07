@@ -6,6 +6,10 @@
 
 class ABlueSphere;
 
+/**
+ * Widget that displays a row of buttons for each residue.
+ * Each button changes color depending on whether its residue is visible (blue) or hidden (red).
+ */
 class FResidueVisibilityWidget : public SCompoundWidget
 {
 public:
@@ -13,15 +17,19 @@ public:
         SLATE_ARGUMENT(TWeakObjectPtr<ABlueSphere>, BlueSphere) // The BlueSphere actor
     SLATE_END_ARGS()
 
+    /** Builds the widget */
     void Construct(const FArguments& InArgs);
 
 private:
-    // A pointer to the BlueSphere instance
+    /** Reference to the BlueSphere actor */
     TWeakObjectPtr<ABlueSphere> BlueSphere;
 
-    // List to store buttons for each residue
-    TArray<TSharedPtr<SButton>> Buttons;
+    /** Buttons representing each residue */
+    TArray<TSharedPtr<SButton>> ResidueButtons;
 
-    // Called when a residue's button is clicked to toggle visibility
+    /** Called when a residue's button is clicked to toggle visibility */
     FReply OnResidueButtonClicked(int32 ResidueIndex);
+
+    /** Returns the button color depending on residue visibility (blue if shown, red if hidden) */
+    FSlateColor GetResidueButtonColor(int32 ResidueIndex) const;
 };
