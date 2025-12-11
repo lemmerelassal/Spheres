@@ -37,7 +37,7 @@ void ALigands::BeginPlay()
 
     SetActorLocation(FVector::ZeroVector);
 
-    FString JSONPath = TEXT("D:/Golang/pdb-group-parser/ligands.json");
+    FString JSONPath = TEXT("D:/Golang/attach_bonds/output_with_bonds.json");
     LoadMoleculeFromJSON(JSONPath);
 
     // Create and display the widget
@@ -56,10 +56,10 @@ void ALigands::LoadMoleculeFromJSON(const FString& FilePath)
         return;
     }
 
-    TSharedPtr<FJsonObject> JsonObject;
+    TSharedPtr<FJsonValue> RootValue;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonText);
 
-    if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+    if (!FJsonSerializer::Deserialize(Reader, RootValue) || !RootValue.IsValid())
     {
         UE_LOG(LogTemp, Error, TEXT("Failed to parse JSON"));
         return;
@@ -67,89 +67,194 @@ void ALigands::LoadMoleculeFromJSON(const FString& FilePath)
 
     const float Scale = 50.f;
 
-    // PDB ID level
-    for (auto& PDBPair : JsonObject->Values)
+    // Helper to parse a single ligand JSON object
+    auto ParseSingleLigand = [&](TSharedPtr<FJsonObject> LigObj)
     {
-        TSharedPtr<FJsonObject> PDBObj = PDBPair.Value->AsObject();
-        if (!PDBObj.IsValid()) continue;
+        if (!LigObj.IsValid()) return; // nothing to do
 
-        // Some ID level (like "5S8M")
-        for (auto& IDPair : PDBObj->Values)
+        FLigandData NewLigand;
+
+        // Build a friendly ligand name if fields exist
+        FString PDB = LigObj->HasField(TEXT("pdb")) ? LigObj->GetStringField(TEXT("pdb")) : FString();
+        FString Chain = LigObj->HasField(TEXT("chain")) ? LigObj->GetStringField(TEXT("chain")) : FString();
+        FString LigandID = LigObj->HasField(TEXT("ligand")) ? LigObj->GetStringField(TEXT("ligand")) : FString(TEXT("Ligand"));
+
+        if (!PDB.IsEmpty() && !Chain.IsEmpty())
         {
-            TSharedPtr<FJsonObject> IDObj = IDPair.Value->AsObject();
-            if (!IDObj.IsValid()) continue;
+            NewLigand.LigandName = FString::Printf(TEXT("%s (%s Chain %s)"), *LigandID, *PDB, *Chain);
+        }
+        else if (!PDB.IsEmpty())
+        {
+            NewLigand.LigandName = FString::Printf(TEXT("%s (%s)"), *LigandID, *PDB);
+        }
+        else
+        {
+            NewLigand.LigandName = LigandID;
+        }
 
-            // Chain level (like "A")
-            for (auto& ChainPair : IDObj->Values)
+        // Get atoms object
+        if (!LigObj->HasField(TEXT("atoms")))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Ligand %s missing \"atoms\" field, skipping"), *NewLigand.LigandName);
+            return;
+        }
+
+        TSharedPtr<FJsonObject> AtomsObject = LigObj->GetObjectField(TEXT("atoms"));
+        if (!AtomsObject.IsValid())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Ligand %s has invalid \"atoms\" object, skipping"), *NewLigand.LigandName);
+            return;
+        }
+
+        TArray<FString> AtomKeys;
+        AtomsObject->Values.GetKeys(AtomKeys);
+
+        // Skip ligands with fewer than 6 atoms
+        if (AtomKeys.Num() < 6)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Skipping ligand %s (only %d atoms)"), *NewLigand.LigandName, AtomKeys.Num());
+            return;
+        }
+
+        // Map atom name -> index (populate after validating count)
+        TMap<FString, int32> NameToIndex;
+        NameToIndex.Reserve(AtomKeys.Num());
+
+        // Now create spheres and populate atom arrays
+        for (const FString& AtomName : AtomKeys)
+        {
+            TSharedPtr<FJsonObject> AtomObj = AtomsObject->GetObjectField(AtomName);
+            if (!AtomObj.IsValid()) continue;
+
+            double X = 0.0, Y = 0.0, Z = 0.0;
+            if (AtomObj->HasField(TEXT("x"))) X = AtomObj->GetNumberField(TEXT("x"));
+            if (AtomObj->HasField(TEXT("y"))) Y = AtomObj->GetNumberField(TEXT("y"));
+            if (AtomObj->HasField(TEXT("z"))) Z = AtomObj->GetNumberField(TEXT("z"));
+
+            FString Element = AtomObj->HasField(TEXT("element")) ? AtomObj->GetStringField(TEXT("element")) : FString(TEXT("C"));
+
+            FVector Pos = FVector(X * Scale, Y * Scale, Z * Scale);
+
+            DrawSphere(Pos.X, Pos.Y, Pos.Z, ElementColor(Element), RootComponent, NewLigand.AtomSpheres);
+
+            NewLigand.AtomPositions.Add(Pos);
+            NewLigand.AtomElements.Add(Element);
+            NewLigand.AtomNames.Add(AtomName);
+
+            NameToIndex.Add(AtomName, NewLigand.AtomPositions.Num() - 1);
+        }
+
+        // Parse bonds array: each bond is expected to be an object with "atom1","atom2", and optional "order"
+        const TArray<TSharedPtr<FJsonValue>>* BondsArray = nullptr;
+        if (LigObj->TryGetArrayField(TEXT("bonds"), BondsArray) && BondsArray)
+        {
+            for (const TSharedPtr<FJsonValue>& BondVal : *BondsArray)
             {
-                const TArray<TSharedPtr<FJsonValue>>* AtomArray;
-                if (!ChainPair.Value->TryGetArray(AtomArray)) continue;
+                if (!BondVal.IsValid()) continue;
 
-                FLigandData NewLigand;
-                NewLigand.LigandName = FString::Printf(TEXT("%s %s (%s)"), *IDPair.Key, *ChainPair.Key, *PDBPair.Key);
-
-                TArray<FVector> AtomPositions;
-                TArray<FString> AtomElements;
-
-                for (const TSharedPtr<FJsonValue>& AtomValue : *AtomArray)
+                // allow object form { "atom1":"A", "atom2":"B", "order":1 } OR array form ["A","B",1]
+                if (BondVal->Type == EJson::Object)
                 {
-                    TSharedPtr<FJsonObject> AtomObj = AtomValue->AsObject();
-                    if (!AtomObj.IsValid()) continue;
+                    TSharedPtr<FJsonObject> BondObj = BondVal->AsObject();
+                    if (!BondObj.IsValid()) continue;
 
-                    FString Element = AtomObj->GetStringField("hetatm_name");
+                    FString AName = BondObj->HasField(TEXT("atom1")) ? BondObj->GetStringField(TEXT("atom1")) : FString();
+                    FString BName = BondObj->HasField(TEXT("atom2")) ? BondObj->GetStringField(TEXT("atom2")) : FString();
+                    int32 Order = BondObj->HasField(TEXT("order")) ? BondObj->GetIntegerField(TEXT("order")) : 1;
 
-                    TSharedPtr<FJsonObject> PosObj = AtomObj->GetObjectField("position");
-                    double X = PosObj->GetNumberField("X");
-                    double Y = PosObj->GetNumberField("Y");
-                    double Z = PosObj->GetNumberField("Z");
+                    if (AName.IsEmpty() || BName.IsEmpty()) continue;
 
-                    FVector Pos = FVector(X * Scale, Y * Scale, Z * Scale);
-                    AtomPositions.Add(Pos);
-                    AtomElements.Add(Element);
+                    int32 AIndex = NameToIndex.Contains(AName) ? NameToIndex[AName] : INDEX_NONE;
+                    int32 BIndex = NameToIndex.Contains(BName) ? NameToIndex[BName] : INDEX_NONE;
 
-                    DrawSphere(Pos.X, Pos.Y, Pos.Z, ElementColor(Element), RootComponent, NewLigand.AtomSpheres);
+                    if (AIndex != INDEX_NONE && BIndex != INDEX_NONE)
+                    {
+                        DrawBond(NewLigand.AtomPositions[AIndex], NewLigand.AtomPositions[BIndex], Order, FLinearColor::Gray, RootComponent, NewLigand.BondCylinders);
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Bond references missing atom(s): %s - %s in ligand %s"), *AName, *BName, *NewLigand.LigandName);
+                    }
                 }
+                else if (BondVal->Type == EJson::Array)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>& Pair = BondVal->AsArray();
+                    if (Pair.Num() < 2) continue;
 
-                // Bonds handling could be added here if available
+                    FString AName = Pair[0]->AsString();
+                    FString BName = Pair[1]->AsString();
+                    int32 Order = (Pair.Num() >= 3) ? (int32)Pair[2]->AsNumber() : 1;
 
-                LigandsArray.Add(NewLigand);
+                    int32 AIndex = NameToIndex.Contains(AName) ? NameToIndex[AName] : INDEX_NONE;
+                    int32 BIndex = NameToIndex.Contains(BName) ? NameToIndex[BName] : INDEX_NONE;
+
+                    if (AIndex != INDEX_NONE && BIndex != INDEX_NONE)
+                    {
+                        DrawBond(NewLigand.AtomPositions[AIndex], NewLigand.AtomPositions[BIndex], Order, FLinearColor::Gray, RootComponent, NewLigand.BondCylinders);
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("Bond references missing atom(s): %s - %s in ligand %s"), *AName, *BName, *NewLigand.LigandName);
+                    }
+                }
             }
         }
-    }
-}
 
+        // Store the ligand
+        LigandsArray.Add(NewLigand);
+    };
+
+    // If root is an array of ligands, parse each entry
+    if (RootValue->Type == EJson::Array)
+    {
+        const TArray<TSharedPtr<FJsonValue>>& RootArray = RootValue->AsArray();
+        for (const TSharedPtr<FJsonValue>& Element : RootArray)
+        {
+            if (!Element.IsValid()) continue;
+            if (Element->Type == EJson::Object)
+            {
+                ParseSingleLigand(Element->AsObject());
+            }
+        }
+        return;
+    }
+
+    // If root is an object, treat it as one ligand
+    if (RootValue->Type == EJson::Object)
+    {
+        ParseSingleLigand(RootValue->AsObject());
+        return;
+    }
+
+    UE_LOG(LogTemp, Error, TEXT("Unsupported JSON root type for molecule file"));
+}
 
 FLinearColor ALigands::ElementColor(const FString& Element)
 {
     if (Element.IsEmpty()) return FLinearColor::Black;
 
-TCHAR FirstChar = Element[0];
 
-
-
-    if(Element.StartsWith("CL")) return FLinearColor(0.0f, 1.0f, 0.0f);
-    if(Element.StartsWith("NA")) return FLinearColor(0.0f, 0.0f, 1.0f);
-    if(Element.StartsWith("MG")) return FLinearColor(0.0f, 0.8f, 0.0f);
-    if(Element.StartsWith("CA")) return FLinearColor(0.5f, 0.5f, 0.5f);
-    if(Element.StartsWith("FE")) return FLinearColor(0.8f, 0.4f, 0.0f);
-    if(Element.StartsWith("BR")) return FLinearColor(0.6f, 0.2f, 0.2f);
-    if(Element.StartsWith("F")) return FLinearColor(0.0f, 1.0f, 0.0f);
-    if(Element.StartsWith("I")) return FLinearColor(0.4f, 0.0f, 0.8f);
-    if(Element.StartsWith("K")) return FLinearColor(0.5f, 0.0f, 1.0f);
-    if(Element.StartsWith("ZN")) return FLinearColor(0.5f, 0.5f, 0.0f);
-    if(Element.StartsWith("CU")) return FLinearColor(0.8f, 0.5f, 0.2f);
-    if(Element.StartsWith("SE")) return FLinearColor(1.0f, 0.5f, 0.0f);
-
-    switch (FirstChar)
-    {
-    case 'C': return FLinearColor(0.1f, 0.1f, 0.1f);
-    case 'O': return FLinearColor::Red;
-    case 'H': return FLinearColor::White;
-    case 'N': return FLinearColor::Blue;
-    case 'S': return FLinearColor::Yellow;
-    case 'P': return FLinearColor(1.f, 0.5f, 0.f);
-    default:  return FLinearColor::Gray;
-    }
+    if(Element == "C") return FLinearColor(0.1f, 0.1f, 0.1f);
+    if(Element == "O") return FLinearColor::Red;
+    if(Element == "H") return FLinearColor::White;
+    if(Element == "D") return FLinearColor::White;
+    if(Element == "N") return FLinearColor::Blue;
+    if(Element == "S") return FLinearColor::Yellow;
+    if(Element == "CL") return FLinearColor(0.0f, 1.0f, 0.0f);
+    if(Element == "P") return FLinearColor(1.0f, 0.5f, 0.0f);
+    if(Element == "F") return FLinearColor(0.0f, 1.0f, 0.0f);
+    if(Element == "BR") return FLinearColor(0.6f, 0.2f, 0.2f);
+    if(Element == "I") return FLinearColor(0.4f, 0.0f, 0.8f);
+    if(Element == "FE") return FLinearColor(0.8f, 0.4f, 0.0f);
+    if(Element == "MG") return FLinearColor(0.0f, 0.8f, 0.0f);
+    if(Element == "ZN") return FLinearColor(0.5f, 0.5f, 0.5f);
+    if(Element == "CA") return FLinearColor(0.2f, 0.6f, 1.0f);
+    if(Element == "NA") return FLinearColor(0.0f, 0.0f, 1.0f);
+    if(Element == "K") return FLinearColor(0.5f, 0.0f, 1.0f);
+    if(Element == "CU") return FLinearColor(1.0f, 0.5f, 0.0f);
+    if(Element == "B") return FLinearColor(1.0f, 0.7f, 0.7f);
+    return FLinearColor::Gray;
+    
 
 }
 
@@ -163,9 +268,22 @@ void ALigands::DrawSphere(float x, float y, float z, const FLinearColor& Color, 
     Sphere->SetWorldScale3D(FVector(0.5f));
 
     UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
+
+    // Keep the original element color
     Mat->SetVectorParameterValue(FName("Color"), Color);
-    Mat->SetScalarParameterValue(FName("EmissiveIntensity"), 5.f);
+
+    // Add green glow via emissive channel (blend original color with green emission)
+    FLinearColor GreenEmission = FLinearColor(0.0f, 1.0f, 0.0f, 1.0f);
+    Mat->SetVectorParameterValue(FName("EmissiveColor"), GreenEmission);
+
+    // Increase emissive intensity so they "glow"
+    Mat->SetScalarParameterValue(FName("EmissiveIntensity"), 50.0f);
+
     Sphere->SetMaterial(0, Mat);
+
+    // Optional: enable custom depth if you use outline/post-process effects
+    Sphere->SetRenderCustomDepth(true);
+    Sphere->SetCustomDepthStencilValue(1);
 
     OutArray.Add(Sphere);
 }

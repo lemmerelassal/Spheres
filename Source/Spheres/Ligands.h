@@ -12,6 +12,17 @@ struct FLigandData
     UPROPERTY()
     FString LigandName;
 
+    // --- Core atom data used for rendering and bonding ---
+    UPROPERTY()
+    TArray<FVector> AtomPositions;   // 3D coordinates of each atom
+
+    UPROPERTY()
+    TArray<FString> AtomElements;    // Chemical element symbols ("C", "O", etc.)
+
+    UPROPERTY()
+    TArray<FString> AtomNames;       // Atom identifiers ("C1", "C2", etc.)
+
+    // --- Runtime mesh components ---
     UPROPERTY()
     TArray<UStaticMeshComponent*> AtomSpheres;
 
@@ -40,7 +51,7 @@ public:
     void ToggleLigandVisibility(int32 LigandIndex, bool bVisible);
 
     // Get reference to all ligands
-    const TArray<FLigandData>& GetLigands() const;   // <-- declaration only (no body here)
+    const TArray<FLigandData>& GetLigands() const;
 
 private:
     // Drawing helpers
@@ -61,7 +72,7 @@ private:
     UPROPERTY()
     UMaterial* SphereMaterialAsset;
 
-    // All ligands
+    // All ligands loaded from JSON
     UPROPERTY()
     TArray<FLigandData> LigandsArray;
 };

@@ -7,6 +7,8 @@
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/SBoxPanel.h"  // SVerticalBox and SHorizontalBox
 #include "Widgets/Layout/SSpacer.h"
+#include "Fonts/SlateFontInfo.h"
+#include "Styling/CoreStyle.h"
 
 void FLigandVisibilityWidget::Construct(const FArguments& InArgs)
 {
@@ -32,9 +34,13 @@ void FLigandVisibilityWidget::Construct(const FArguments& InArgs)
             .Padding(4, 2)
             [
                 SAssignNew(Button, SButton)
-                .Text(FText::FromString(ButtonText))
                 .ButtonColorAndOpacity(this, &FLigandVisibilityWidget::GetLigandButtonColor, i)
                 .OnClicked(this, &FLigandVisibilityWidget::OnLigandButtonClicked, i)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(ButtonText))
+                    .Font(FSlateFontInfo(FCoreStyle::GetDefaultFont(), 16, FName("Regular")))
+                ]
             ];
 
             LigandButtons.Add(Button);

@@ -7,6 +7,8 @@
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/SBoxPanel.h"  // contains SVerticalBox and SHorizontalBox
 #include "Widgets/Layout/SSpacer.h"
+#include "Fonts/SlateFontInfo.h"
+#include "Styling/CoreStyle.h"
 
 void FResidueVisibilityWidget::Construct(const FArguments& InArgs)
 {
@@ -34,6 +36,11 @@ void FResidueVisibilityWidget::Construct(const FArguments& InArgs)
                 .Text(FText::FromString(ButtonText))
                 .ButtonColorAndOpacity(this, &FResidueVisibilityWidget::GetResidueButtonColor, i)
                 .OnClicked(this, &FResidueVisibilityWidget::OnResidueButtonClicked, i)
+                                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(ButtonText))
+                    .Font(FSlateFontInfo(FCoreStyle::GetDefaultFont(), 16, FName("Regular")))
+                ]
             ];
 
             ResidueButtons.Add(Button);
