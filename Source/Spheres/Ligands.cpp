@@ -260,32 +260,60 @@ FLinearColor ALigands::ElementColor(const FString& Element)
 
 void ALigands::DrawSphere(float x, float y, float z, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray)
 {
+    // Main sphere (colored, slightly flat/emissive to approximate cel shading)
     UStaticMeshComponent* Sphere = NewObject<UStaticMeshComponent>(this);
     Sphere->RegisterComponent();
     Sphere->AttachToComponent(Parent, FAttachmentTransformRules::KeepRelativeTransform);
     Sphere->SetStaticMesh(SphereMeshAsset);
     Sphere->SetRelativeLocation(FVector(x, y, z));
     Sphere->SetWorldScale3D(FVector(0.5f));
+    Sphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Sphere->SetCastShadow(true);
 
     UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
-
-    // Keep the original element color
     Mat->SetVectorParameterValue(FName("Color"), Color);
 
-    // Add green glow via emissive channel (blend original color with green emission)
-    FLinearColor GreenEmission = FLinearColor(0.0f, 1.0f, 0.0f, 1.0f);
-    Mat->SetVectorParameterValue(FName("EmissiveColor"), GreenEmission);
+    // Boost emissive a bit so shading looks flatter (depends on the base material)
+    Mat->SetVectorParameterValue(FName("EmissiveColor"), Color * 0.35f);
+    Mat->SetScalarParameterValue(FName("EmissiveIntensity"), 5.0f);
 
-    // Increase emissive intensity so they "glow"
-    Mat->SetScalarParameterValue(FName("EmissiveIntensity"), 50.0f);
+    // If your base material supports parameters like roughness/specular, you can
+    // set them here to reduce specular highlights and favor flat diffuse.
+    // Mat->SetScalarParameterValue(FName("Roughness"), 1.0f);
+    // Mat->SetScalarParameterValue(FName("Specular"), 0.0f);
 
     Sphere->SetMaterial(0, Mat);
 
-    // Optional: enable custom depth if you use outline/post-process effects
-    Sphere->SetRenderCustomDepth(true);
-    Sphere->SetCustomDepthStencilValue(1);
+    // Optional: enable custom depth if you later want a post-process outline
+    Sphere->SetRenderCustomDepth(false);
 
     OutArray.Add(Sphere);
+
+    // Outline/backface sphere (slightly larger, reverse-cull so backfaces render)
+    UStaticMeshComponent* Outline = NewObject<UStaticMeshComponent>(this);
+    Outline->RegisterComponent();
+    Outline->AttachToComponent(Parent, FAttachmentTransformRules::KeepRelativeTransform);
+    Outline->SetStaticMesh(SphereMeshAsset);
+    Outline->SetRelativeLocation(FVector(x, y, z));
+
+    // Slightly larger to produce a silhouette rim
+    const float OutlineScale = 0.54f;
+    Outline->SetWorldScale3D(FVector(OutlineScale));
+    Outline->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Outline->SetCastShadow(false);
+
+    // Invert culling so the backfaces of the scaled-up sphere show as a rim
+    Outline->bReverseCulling = true;
+
+    UMaterialInstanceDynamic* OutlineMat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
+    OutlineMat->SetVectorParameterValue(FName("Color"), FLinearColor::Black);
+    // Make it emissive so it's always solid black regardless of lighting
+    OutlineMat->SetVectorParameterValue(FName("EmissiveColor"), FLinearColor::Black);
+    OutlineMat->SetScalarParameterValue(FName("EmissiveIntensity"), 50.0f);
+
+    Outline->SetMaterial(0, OutlineMat);
+
+    OutArray.Add(Outline);
 }
 
 void ALigands::DrawBond(const FVector& Start, const FVector& End, int32 Order, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray)
