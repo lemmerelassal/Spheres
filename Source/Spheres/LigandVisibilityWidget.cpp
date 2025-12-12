@@ -19,7 +19,7 @@ void FLigandVisibilityWidget::Construct(const FArguments& InArgs)
 
     if (Ligands.IsValid())
     {
-        // ✅ Rename local variable to avoid shadowing
+        // Rename local variable to avoid shadowing
         const TArray<FLigandData>& LigandList = Ligands->GetLigands();
 
         for (int32 i = 0; i < LigandList.Num(); ++i)
@@ -45,9 +45,15 @@ void FLigandVisibilityWidget::Construct(const FArguments& InArgs)
 
             LigandButtons.Add(Button);
         }
+
+        // Hide all ligands by default
+        for (int32 i = 0; i < LigandList.Num(); ++i)
+        {
+            Ligands->ToggleLigandVisibility(i, false);
+        }
     }
 
-    // ✅ Wrap in a vertical box so the bar stays at the bottom
+    // Wrap in a vertical box so the bar stays at the bottom
     ChildSlot
     [
         SNew(SVerticalBox)
@@ -108,17 +114,37 @@ FReply FLigandVisibilityWidget::OnLigandButtonClicked(int32 LigandIndex)
     {
         const TArray<FLigandData>& LigandList = Ligands->GetLigands();
 
-        if (LigandList.IsValidIndex(LigandIndex) && LigandList[LigandIndex].AtomSpheres.Num() > 0)
+        if (LigandList.IsValidIndex(LigandIndex))
         {
-            bool bCurrentVisibility = LigandList[LigandIndex].AtomSpheres[0]->IsVisible();
-
-            // ✅ Use correct function name from ALigands
-            Ligands->ToggleLigandVisibility(LigandIndex, !bCurrentVisibility);
-
-            // ✅ Refresh button color immediately
-            if (LigandButtons.IsValidIndex(LigandIndex) && LigandButtons[LigandIndex].IsValid())
+            bool bCurrentVisibility = false;
+            if (LigandList[LigandIndex].AtomSpheres.Num() > 0)
             {
-                LigandButtons[LigandIndex]->Invalidate(EInvalidateWidgetReason::Paint);
+                bCurrentVisibility = LigandList[LigandIndex].AtomSpheres[0]->IsVisible();
+            }
+
+            if (bCurrentVisibility)
+            {
+                // If clicked ligand is visible, hide it (result: none visible)
+                Ligands->ToggleLigandVisibility(LigandIndex, false);
+            }
+            else
+            {
+                // Hide all ligands first, then show selected one (ensures only one visible)
+                for (int32 i = 0; i < LigandList.Num(); ++i)
+                {
+                    Ligands->ToggleLigandVisibility(i, false);
+                }
+
+                Ligands->ToggleLigandVisibility(LigandIndex, true);
+            }
+
+            // Refresh all button colors
+            for (int32 i = 0; i < LigandButtons.Num(); ++i)
+            {
+                if (LigandButtons[i].IsValid())
+                {
+                    LigandButtons[i]->Invalidate(EInvalidateWidgetReason::Paint);
+                }
             }
         }
     }

@@ -27,7 +27,8 @@ public class Spheres : ModuleRules
 			"JsonUtilities",
 			"Slate",       // Slate module for UI elements like SButton
 			"SlateCore",   // Core functionality for Slate widgets
-			"UMG"          // If you're using UMG, keep it
+			"UMG",         // If you're using UMG, keep it
+			"HTTP"
 		});
 
 		// Private dependencies for your custom modules (like Eigen)
