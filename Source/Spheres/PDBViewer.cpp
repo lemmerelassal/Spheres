@@ -330,6 +330,7 @@ void APDBViewer::ParseLigandCIF(const FString& FileContent, const TMap<FString, 
     TArray<FString> Headers;
     int Atom1Idx = -1;
     int Atom2Idx = -1;
+    int BondOrderIdx = -1; // <-- new
 
     TArray<UStaticMeshComponent*> BondMeshes;
 
@@ -339,7 +340,7 @@ void APDBViewer::ParseLigandCIF(const FString& FileContent, const TMap<FString, 
         {
             bInBondLoop = true;
             Headers.Empty();
-            Atom1Idx = Atom2Idx = -1;
+            Atom1Idx = Atom2Idx = BondOrderIdx = -1;
             continue;
         }
 
@@ -348,10 +349,12 @@ void APDBViewer::ParseLigandCIF(const FString& FileContent, const TMap<FString, 
             // collect header lines for this loop
             Headers.Add(Line);
             FString Lower = Line.ToLower();
-            if (Lower.Contains(TEXT("atom_id_1")) || Lower.Contains(TEXT("atom_id_1")))
+            if (Lower.Contains(TEXT("atom_id_1")) || Lower.Contains(TEXT("atom_1")))
                 Atom1Idx = Headers.Num() - 1;
-            if (Lower.Contains(TEXT("atom_id_2")) || Lower.Contains(TEXT("atom_id_2")))
+            if (Lower.Contains(TEXT("atom_id_2")) || Lower.Contains(TEXT("atom_2")))
                 Atom2Idx = Headers.Num() - 1;
+            if (Lower.Contains(TEXT("value_order")) || Lower.Contains(TEXT("bond_order")) || Lower.Contains(TEXT("value")))
+                BondOrderIdx = Headers.Num() - 1; // <-- new
             continue;
         }
 
@@ -372,11 +375,26 @@ void APDBViewer::ParseLigandCIF(const FString& FileContent, const TMap<FString, 
 
             FString Raw1 = Tokens[Atom1Idx];
             FString Raw2 = Tokens[Atom2Idx];
+            FString RawOrder = (BondOrderIdx >= 0 && Tokens.IsValidIndex(BondOrderIdx)) ? Tokens[BondOrderIdx] : FString(TEXT("1"));
 
+            int Order = 1;
+            FString LowerOrder = RawOrder.ToLower();
+            if (LowerOrder.Contains(TEXT("ar")) || LowerOrder.Contains(TEXT("aromatic")))
+            {
+                Order = 1; // handle aromatic like single for now (could special-case)
+            }
+            else
+            {
+                int Parsed = FCString::Atoi(*RawOrder);
+                if (Parsed > 0) Order = Parsed;
+                else if (LowerOrder.Contains(TEXT("double")) || LowerOrder.Contains(TEXT("d"))) Order = 2;
+                else if (LowerOrder.Contains(TEXT("triple")) || LowerOrder.Contains(TEXT("t"))) Order = 3;
+            }
+
+            // Normalize the raw atom ids and try to find positions
             FString Id1 = NormalizeId(Raw1);
             FString Id2 = NormalizeId(Raw2);
 
-            // Try to find normalized positions
             const FVector* P1 = NormPositions.Find(Id1);
             const FVector* P2 = NormPositions.Find(Id2);
 
@@ -409,7 +427,7 @@ void APDBViewer::ParseLigandCIF(const FString& FileContent, const TMap<FString, 
 
             if (P1 && P2)
             {
-                DrawBond(*P1, *P2, 1, FLinearColor::Gray, GetRootComponent(), BondMeshes);
+                DrawBond(*P1, *P2, Order, FLinearColor::Gray, GetRootComponent(), BondMeshes);
             }
         }
 
@@ -466,20 +484,54 @@ void APDBViewer::DrawBond(const FVector& Start, const FVector& End, int32 Order,
     const float DefaultHalfHeight = 50.0f;
     float ZScale = Length / (2.0f * DefaultHalfHeight);
 
-    UStaticMeshComponent* Cylinder = NewObject<UStaticMeshComponent>(this);
-    Cylinder->SetStaticMesh(CylinderMeshAsset);
-    Cylinder->SetWorldLocation(MidPoint);
-    Cylinder->SetWorldRotation(Rotation);
-    Cylinder->SetWorldScale3D(FVector(0.1f, 0.1f, ZScale));
-    Cylinder->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    Cylinder->RegisterComponent();
-    Cylinder->AttachToComponent(Parent, FAttachmentTransformRules::KeepWorldTransform);
+    auto SpawnCylinderAt = [&](const FVector& Pos){
+        UStaticMeshComponent* Cylinder = NewObject<UStaticMeshComponent>(this);
+        Cylinder->SetStaticMesh(CylinderMeshAsset);
+        Cylinder->SetWorldLocation(Pos);
+        Cylinder->SetWorldRotation(Rotation);
+        Cylinder->SetWorldScale3D(FVector(0.1f, 0.1f, ZScale));
+        Cylinder->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        Cylinder->RegisterComponent();
+        Cylinder->AttachToComponent(Parent, FAttachmentTransformRules::KeepWorldTransform);
 
-    UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
-    Mat->SetVectorParameterValue(FName("Color"), Color);
-    Cylinder->SetMaterial(0, Mat);
+        UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
+        Mat->SetVectorParameterValue(FName("Color"), Color);
+        Cylinder->SetMaterial(0, Mat);
+        OutArray.Add(Cylinder);
+    };
 
-    OutArray.Add(Cylinder);
+    // If single bond, draw single cylinder
+    if (Order <= 1)
+    {
+        SpawnCylinderAt(MidPoint);
+        return;
+    }
+
+    // For double/triple bonds: compute a perpendicular offset vector and spawn multiple cylinders
+    FVector Dir = BondVector.GetSafeNormal();
+    FVector Perp = FVector::CrossProduct(Dir, FVector::UpVector);
+    if (Perp.SizeSquared() < KINDA_SMALL_NUMBER)
+        Perp = FVector::CrossProduct(Dir, FVector::RightVector);
+    Perp.Normalize();
+
+    const float OffsetDist = 8.0f; // tweak for visual spacing
+
+    if (Order == 2)
+    {
+        SpawnCylinderAt(MidPoint + Perp * OffsetDist);
+        SpawnCylinderAt(MidPoint - Perp * OffsetDist);
+    }
+    else if (Order == 3)
+    {
+        SpawnCylinderAt(MidPoint);
+        SpawnCylinderAt(MidPoint + Perp * OffsetDist);
+        SpawnCylinderAt(MidPoint - Perp * OffsetDist);
+    }
+    else
+    {
+        // fallback: draw single cylinder for unknown order
+        SpawnCylinderAt(MidPoint);
+    }
 }
 
 // ----------------------------
