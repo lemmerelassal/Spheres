@@ -430,17 +430,23 @@ void APDBViewer::DrawSphere(float x, float y, float z, const FLinearColor& Color
 {
     if (!SphereMeshAsset || !SphereMaterialAsset || !Parent) return;
 
+    const FVector WorldPos(x, y, z);
+    // Convert world-style position into Parent-local position so both spheres and bonds share the same space
+    const FTransform ParentTransform = Parent->GetComponentTransform();
+    const FVector LocalPos = ParentTransform.InverseTransformPosition(WorldPos);
+
     UStaticMeshComponent* Sphere = NewObject<UStaticMeshComponent>(this);
-    Sphere->RegisterComponent();
-    Sphere->AttachToComponent(Parent, FAttachmentTransformRules::KeepRelativeTransform);
     Sphere->SetStaticMesh(SphereMeshAsset);
-    Sphere->SetRelativeLocation(FVector(x, y, z));
-    Sphere->SetWorldScale3D(FVector(0.5f));
+    Sphere->AttachToComponent(Parent, FAttachmentTransformRules::KeepRelativeTransform);
+    Sphere->SetRelativeLocation(LocalPos);
+    Sphere->SetWorldScale3D(FVector(0.5f)); // fine to use world scale for uniform sizing
 
     UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
     Mat->SetVectorParameterValue(FName("Color"), Color);
     Mat->SetScalarParameterValue(FName("EmissiveIntensity"), 5.f);
     Sphere->SetMaterial(0, Mat);
+
+    Sphere->RegisterComponent();
 
     OutArray.Add(Sphere);
 }
