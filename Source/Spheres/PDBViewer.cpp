@@ -1,4 +1,5 @@
 #include "PDBViewer.h"
+#include "PDBCameraComponent.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpResponse.h"
 #include "DrawDebugHelpers.h"
@@ -31,6 +32,15 @@ void APDBViewer::BeginPlay()
 {
     Super::BeginPlay();
     FetchAndDisplayStructure(TEXT("5ENB")); // example PDB ID
+    APDBCameraComponent* CameraActor = GetWorld()->SpawnActor<APDBCameraComponent>(
+        APDBCameraComponent::StaticClass(), 
+        GetActorLocation(), 
+        FRotator::ZeroRotator
+    );
+    if (CameraActor)
+    {
+        CameraActor->SetTargetActor(this);
+    }
 }
 
 // ----------------------------
