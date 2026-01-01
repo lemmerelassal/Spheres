@@ -29,7 +29,7 @@ APDBCameraComponent::APDBCameraComponent()
     PanSpeed = 5.0f;
     ZoomSpeed = 100.0f;
     MinZoomDistance = 200.0f;
-    MaxZoomDistance = 50000000.0f; // Very large scenes supported
+    MaxZoomDistance = 50000000.0f; // Much larger max distance
 
     CurrentYaw = 0.0f;
     CurrentPitch = -30.0f;
@@ -38,10 +38,10 @@ APDBCameraComponent::APDBCameraComponent()
     bIsFirstLeftFrame = false;
     bIsFirstRightFrame = false;
 
-    // Initial camera offset
+    // Set initial camera position
     Camera->SetRelativeLocation(FVector(-OrbitDistance, 0, 0));
 
-    // Enable player input
+    // Enable input
     AutoPossessPlayer = EAutoReceiveInput::Player0;
 }
 
@@ -49,21 +49,26 @@ void APDBCameraComponent::BeginPlay()
 {
     Super::BeginPlay();
 
+    // Get player controller and set view target
     APlayerController* PC = GetWorld()->GetFirstPlayerController();
     if (PC)
     {
         PC->SetViewTarget(this);
         PC->bShowMouseCursor = true;
+        
+        // Disable touch interface (removes on-screen joysticks)
         PC->ActivateTouchInterface(nullptr);
-
+        
+        // Use Game and UI mode
         FInputModeGameAndUI InputMode;
         InputMode.SetHideCursorDuringCapture(false);
         InputMode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
         PC->SetInputMode(InputMode);
     }
 
+    // Apply initial rotation
     PivotPoint->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0));
-
+    
     LastMousePosition = FVector2D::ZeroVector;
     MousePositionOnPress = FVector2D::ZeroVector;
 }
@@ -71,41 +76,47 @@ void APDBCameraComponent::BeginPlay()
 void APDBCameraComponent::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
-
+    
     APlayerController* PC = GetWorld()->GetFirstPlayerController();
     if (!PC) return;
 
+    // Get mouse position from Slate (this is more reliable)
     FVector2D CurrentMousePos = FSlateApplication::Get().GetCursorPos();
-
-    // Input: right = rotate, middle = pan
+    
+    // Check mouse buttons - SWAPPED: Right=Rotate, Middle=Pan
     bool bRotateMouseDown = PC->IsInputKeyDown(EKeys::RightMouseButton);
     bool bPanMouseDown = PC->IsInputKeyDown(EKeys::MiddleMouseButton);
 
-    // Handle right mouse press/release
+    // Handle rotate mouse button state changes (RIGHT MOUSE)
     if (bRotateMouseDown && !bLeftMouseWasDown)
     {
+        // Just pressed
         MousePositionOnPress = CurrentMousePos;
         bIsFirstLeftFrame = true;
     }
     else if (!bRotateMouseDown && bLeftMouseWasDown)
     {
+        // Just released
         bIsFirstLeftFrame = false;
     }
 
-    // Handle middle mouse press/release
+    // Handle pan mouse button state changes (MIDDLE MOUSE)
     if (bPanMouseDown && !bRightMouseWasDown)
     {
+        // Just pressed
         MousePositionOnPress = CurrentMousePos;
         bIsFirstRightFrame = true;
     }
     else if (!bPanMouseDown && bRightMouseWasDown)
     {
+        // Just released
         bIsFirstRightFrame = false;
     }
 
+    // Calculate delta
     FVector2D MouseDelta = CurrentMousePos - LastMousePosition;
 
-    // Rotate
+    // Rotation with RIGHT mouse (skip first frame after press to avoid jump)
     if (bRotateMouseDown && !bIsFirstLeftFrame && MouseDelta.SizeSquared() > 0.01f)
     {
         CurrentYaw += MouseDelta.X * RotationSpeed * 0.5f;
@@ -113,27 +124,27 @@ void APDBCameraComponent::Tick(float DeltaTime)
         PivotPoint->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0));
     }
 
-    // Pan
+    // Pan with MIDDLE mouse (skip first frame after press to avoid jump)
     if (bPanMouseDown && !bIsFirstRightFrame && MouseDelta.SizeSquared() > 0.01f)
     {
         FVector RightVector = Camera->GetRightVector();
         FVector UpVector = Camera->GetUpVector();
-        FVector NewLocation = GetActorLocation()
-            - RightVector * MouseDelta.X * PanSpeed * 0.5f
-            + UpVector * MouseDelta.Y * PanSpeed * 0.5f;
+        FVector NewLocation = GetActorLocation() - RightVector * MouseDelta.X * PanSpeed * 0.5f + UpVector * MouseDelta.Y * PanSpeed * 0.5f;
         SetActorLocation(NewLocation);
     }
 
-    // Clear "first frame" flags
-    bIsFirstLeftFrame = false;
-    bIsFirstRightFrame = false;
+    // Clear first frame flags after first frame
+    if (bIsFirstLeftFrame)
+        bIsFirstLeftFrame = false;
+    if (bIsFirstRightFrame)
+        bIsFirstRightFrame = false;
 
-    // Update tracking
+    // Update tracking variables
     LastMousePosition = CurrentMousePos;
     bLeftMouseWasDown = bRotateMouseDown;
     bRightMouseWasDown = bPanMouseDown;
 
-    // Zoom
+    // Mouse wheel zoom
     float WheelAxis = PC->GetInputAnalogKeyState(EKeys::MouseWheelAxis);
     if (FMath::Abs(WheelAxis) > 0.01f)
     {
@@ -141,7 +152,7 @@ void APDBCameraComponent::Tick(float DeltaTime)
         Camera->SetRelativeLocation(FVector(-OrbitDistance, 0, 0));
     }
 
-    // Fit to screen with spacebar
+    // Fit to screen with spacebar - just center and reset rotation, keep current zoom
     static bool bSpaceWasPressed = false;
     if (PC->IsInputKeyDown(EKeys::SpaceBar))
     {
@@ -172,76 +183,51 @@ void APDBCameraComponent::SetTargetActor(AActor* Target)
 
 void APDBCameraComponent::FitActorToScreen()
 {
-    // Find the PDBViewer actor
+    // Find actor with the most primitive components (that's our molecule)
     TArray<AActor*> AllActors;
     UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), AllActors);
-
-    UE_LOG(LogTemp, Warning, TEXT("Looking for PDBViewer actor among %d actors"), AllActors.Num());
-
-    AActor* PDBViewerActor = nullptr;
+    
+    AActor* MoleculeActor = nullptr;
+    int32 MaxComponents = 0;
+    
     for (AActor* Actor : AllActors)
     {
-        if (Actor == this)
-            continue; // 🚫 Skip the camera itself
-
-        FString ActorName = Actor->GetName();
-        UE_LOG(LogTemp, Log, TEXT("Found actor: %s"), *ActorName);
-
-        // Find actor with "PDB" in the name
-        if (ActorName.Contains(TEXT("PDB"), ESearchCase::IgnoreCase))
+        // Skip self and pawns
+        if (Actor == this || Actor->IsA(APawn::StaticClass()))
+            continue;
+            
+        TArray<UStaticMeshComponent*> MeshComponents;
+        Actor->GetComponents<UStaticMeshComponent>(MeshComponents);
+        
+        // The molecule will have tons of sphere mesh components
+        if (MeshComponents.Num() > MaxComponents && MeshComponents.Num() > 100)
         {
-            PDBViewerActor = Actor;
-            UE_LOG(LogTemp, Warning, TEXT("Found PDBViewer: %s"), *ActorName);
-            break;
+            MaxComponents = MeshComponents.Num();
+            MoleculeActor = Actor;
         }
     }
-
-    // Fallback: find actor with most primitive components (likely the molecule)
-    if (!PDBViewerActor)
+    
+    if (!MoleculeActor)
     {
-        UE_LOG(LogTemp, Error, TEXT("Could not find PDBViewer actor by name; searching by component count..."));
-        int32 MaxComponents = 0;
-        for (AActor* Actor : AllActors)
-        {
-            if (Actor == this || Actor->IsA(APawn::StaticClass()))
-                continue;
-
-            TArray<UPrimitiveComponent*> Components;
-            Actor->GetComponents<UPrimitiveComponent>(Components);
-            if (Components.Num() > MaxComponents)
-            {
-                MaxComponents = Components.Num();
-                PDBViewerActor = Actor;
-            }
-        }
-
-        if (PDBViewerActor)
-        {
-            UE_LOG(LogTemp, Warning, TEXT("Using actor with most components (%d): %s"),
-                MaxComponents, *PDBViewerActor->GetName());
-        }
-    }
-
-    if (!PDBViewerActor)
-    {
-        UE_LOG(LogTemp, Error, TEXT("Still could not find any suitable actor to focus on!"));
+        UE_LOG(LogTemp, Error, TEXT("Could not find molecule actor!"));
         return;
     }
-
-    // Compute bounds
+    
+    UE_LOG(LogTemp, Warning, TEXT("Found molecule actor '%s' with %d components"), 
+        *MoleculeActor->GetName(), MaxComponents);
+    
+    // Get bounds of all the mesh components
     FBox BoundingBox(ForceInit);
     bool bFoundAnyBounds = false;
-
-    TArray<UPrimitiveComponent*> PrimitiveComponents;
-    PDBViewerActor->GetComponents<UPrimitiveComponent>(PrimitiveComponents);
-
-    UE_LOG(LogTemp, Warning, TEXT("PDBViewer has %d primitive components"), PrimitiveComponents.Num());
-
-    for (UPrimitiveComponent* Primitive : PrimitiveComponents)
+    
+    TArray<UStaticMeshComponent*> MeshComponents;
+    MoleculeActor->GetComponents<UStaticMeshComponent>(MeshComponents);
+    
+    for (UStaticMeshComponent* Mesh : MeshComponents)
     {
-        if (Primitive && Primitive->IsVisible())
+        if (Mesh && Mesh->IsVisible())
         {
-            FBox ComponentBounds = Primitive->Bounds.GetBox();
+            FBox ComponentBounds = Mesh->Bounds.GetBox();
             if (ComponentBounds.IsValid)
             {
                 BoundingBox += ComponentBounds;
@@ -249,29 +235,25 @@ void APDBCameraComponent::FitActorToScreen()
             }
         }
     }
-
+    
     if (!bFoundAnyBounds)
     {
-        // Fallback to actor location only
-        SetActorLocation(PDBViewerActor->GetActorLocation());
-        UE_LOG(LogTemp, Log, TEXT("Centered on PDBViewer actor location: %s"),
-            *PDBViewerActor->GetActorLocation().ToString());
-
-        CurrentYaw = 0.0f;
-        CurrentPitch = -30.0f;
-        PivotPoint->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0));
-        return;
+        // Fallback: just use the actor's location
+        SetActorLocation(MoleculeActor->GetActorLocation());
+        UE_LOG(LogTemp, Warning, TEXT("No bounds found, centered on actor location: %s"), 
+            *MoleculeActor->GetActorLocation().ToString());
     }
-
-    // Center and reset orientation
-    FVector Center = BoundingBox.GetCenter();
-
+    else
+    {
+        // Get center
+        FVector Center = BoundingBox.GetCenter();
+        SetActorLocation(Center);
+        UE_LOG(LogTemp, Log, TEXT("Centered on molecule at %s, zoom=%.1f"), 
+            *Center.ToString(), OrbitDistance);
+    }
+    
+    // Reset rotation to default view
     CurrentYaw = 0.0f;
     CurrentPitch = -30.0f;
     PivotPoint->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0));
-
-    SetActorLocation(Center);
-
-    UE_LOG(LogTemp, Log, TEXT("Centered on PDBViewer at %s, keeping zoom distance %.1f"),
-        *Center.ToString(), OrbitDistance);
 }
