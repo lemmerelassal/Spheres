@@ -23,6 +23,9 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Camera")
     void SetTargetActor(AActor* Target);
 
+    // Fit the target actor to screen
+    void FitActorToScreen();
+
 private:
     // Camera components
     UPROPERTY(VisibleAnywhere)
