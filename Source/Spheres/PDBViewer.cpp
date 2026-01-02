@@ -1,3 +1,11 @@
+// Add these includes at the top of your PDBViewer.cpp file:
+#include "Misc/FileHelper.h"
+#include "HAL/PlatformFilemanager.h"
+#include "Misc/Paths.h"
+#include "IDesktopPlatform.h"
+#include "DesktopPlatformModule.h"
+#include "Interfaces/IMainFrameModule.h"
+
 #include "PDBViewer.h"
 #include "PDBCameraComponent.h"
 #include "HttpModule.h"
@@ -48,6 +56,7 @@ void APDBViewer::BeginPlay()
 // ----------------------------
 void APDBViewer::FetchAndDisplayStructure(const FString& PDB_ID)
 {
+    CurrentStructureID = PDB_ID;
     FString PDB_URL = FString::Printf(TEXT("https://files.rcsb.org/download/%s.pdb"), *PDB_ID);
     FString CIF_URL = FString::Printf(TEXT("https://files.rcsb.org/download/%s.cif"), *PDB_ID);
 
@@ -93,18 +102,18 @@ void APDBViewer::FetchFileAsync(const FString& URL, TFunction<void(bool, const F
 // ----------------------------
 void APDBViewer::ParsePDB(const FString& FileContent)
 {
+    // Store the content for saving later
+    CurrentPDBContent = FileContent;
+    
     TArray<FString> Lines;
     FileContent.ParseIntoArrayLines(Lines);
 
-    // Key = unique residue key (resname + seq + chain), Value = map(atomName -> position)
     TMap<FString, TMap<FString, FVector>> ResidueAtoms;
-    TMap<FString, FString> ResidueKeyToName; // map unique key -> residue 3-letter name (for ligand fetch)
-    TArray<UStaticMeshComponent*> AtomMeshes;
+    TMap<FString, FString> ResidueKeyToName;
 
     FVector Center(0,0,0);
     int32 AtomCount = 0;
-
-    const float Scale = 50.f; // match BlueSphere scaling
+    const float Scale = 50.f;
 
     bool bHaveFirstChain = false;
     FString FirstChain;
@@ -113,7 +122,6 @@ void APDBViewer::ParsePDB(const FString& FileContent)
     {
         if (!Line.StartsWith("ATOM")) continue;
 
-        // PDB chain ID (column 22, zero-based index 21)
         FString Chain = Line.Mid(21, 1);
 
         if (!bHaveFirstChain)
@@ -122,15 +130,11 @@ void APDBViewer::ParsePDB(const FString& FileContent)
             bHaveFirstChain = true;
         }
 
-        // Only draw atoms for the first chain encountered
         if (Chain != FirstChain) continue;
 
         FString AtomName = Line.Mid(12,4).TrimStartAndEnd();
         FString ResidueName = Line.Mid(17,3).TrimStartAndEnd();
-
-        // residue sequence number (columns 23-26 -> zero-based 22 length 4)
         FString ResSeq = Line.Mid(22,4).TrimStartAndEnd();
-
         FString Element = Line.Mid(76,2).TrimStartAndEnd().ToUpper();
         if (Element.IsEmpty() && AtomName.Len() > 0) Element = AtomName.Left(1).ToUpper();
 
@@ -142,11 +146,8 @@ void APDBViewer::ParsePDB(const FString& FileContent)
         Center += Pos;
         AtomCount++;
 
-        // build a unique residue key so different residues with same 3-letter name don't collide
         FString ResidueKey = FString::Printf(TEXT("%s_%s_%s"), *ResidueName, *ResSeq, *Chain);
         ResidueAtoms.FindOrAdd(ResidueKey).Add(AtomName, Pos);
-
-        // store mapping so we can fetch ligand CIF using the 3-letter residue name
         ResidueKeyToName.FindOrAdd(ResidueKey) = ResidueName;
     }
 
@@ -154,7 +155,6 @@ void APDBViewer::ParsePDB(const FString& FileContent)
 
     Center /= AtomCount;
 
-    // Draw atoms (for first chain only)
     for (auto& Pair : ResidueAtoms)
     {
         const FString& UniqueResidueKey = Pair.Key;
@@ -163,10 +163,9 @@ void APDBViewer::ParsePDB(const FString& FileContent)
         for (auto& Atom : Atoms)
         {
             FVector Pos = Atom.Value;
-            DrawSphere(Pos.X, Pos.Y, Pos.Z, ElementColor(Atom.Key.Left(1)), GetRootComponent(), AtomMeshes);
+            DrawSphere(Pos.X, Pos.Y, Pos.Z, ElementColor(Atom.Key.Left(1)), GetRootComponent(), AllAtomMeshes);
         }
 
-        // Fetch bonds for this residue (use the 3-letter residue name)
         const FString* Residue3Name = ResidueKeyToName.Find(UniqueResidueKey);
         if (Residue3Name)
             FetchLigandCIF(*Residue3Name, Atoms);
@@ -180,6 +179,8 @@ void APDBViewer::ParsePDB(const FString& FileContent)
 // ----------------------------
 void APDBViewer::ParseMMCIF(const FString& FileContent)
 {
+    CurrentPDBContent = FileContent;
+    
     TArray<FString> Lines;
     FileContent.ParseIntoArrayLines(Lines);
 
@@ -273,7 +274,7 @@ void APDBViewer::ParseMMCIF(const FString& FileContent)
         for (auto& Atom : Atoms)
         {
             FVector Pos = Atom.Value;
-            DrawSphere(Pos.X, Pos.Y, Pos.Z, ElementColor(Atom.Key.Left(1)), GetRootComponent(), AtomMeshes);
+            DrawSphere(Pos.X, Pos.Y, Pos.Z, ElementColor(Atom.Key.Left(1)), GetRootComponent(), AllAtomMeshes);
         }
 
         // Fetch bonds for this residue using 3-letter residue name
@@ -437,7 +438,7 @@ void APDBViewer::ParseLigandCIF(const FString& FileContent, const TMap<FString, 
 
             if (P1 && P2)
             {
-                DrawBond(*P1, *P2, Order, FLinearColor::Gray, GetRootComponent(), BondMeshes);
+                DrawBond(*P1, *P2, Order, FLinearColor::Gray, GetRootComponent(), AllBondMeshes);
             }
         }
 
@@ -569,3 +570,163 @@ FLinearColor APDBViewer::ElementColor(const FString& Element)
     if (Element.Equals("B",ESearchCase::IgnoreCase)) return FLinearColor(1.0f,0.7f,0.7f);
     return FLinearColor::Gray;
 }
+
+
+
+void APDBViewer::ClearCurrentStructure()
+{
+    // Destroy all atom meshes
+    for (UStaticMeshComponent* Mesh : AllAtomMeshes)
+    {
+        if (Mesh && IsValid(Mesh))
+        {
+            Mesh->DestroyComponent();
+        }
+    }
+    AllAtomMeshes.Empty();
+
+    // Destroy all bond meshes
+    for (UStaticMeshComponent* Mesh : AllBondMeshes)
+    {
+        if (Mesh && IsValid(Mesh))
+        {
+            Mesh->DestroyComponent();
+        }
+    }
+    AllBondMeshes.Empty();
+
+    UE_LOG(LogTemp, Log, TEXT("Cleared current structure"));
+}
+
+void APDBViewer::SaveStructureToFile(const FString& FilePath)
+{
+    if (CurrentPDBContent.IsEmpty())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No structure data to save"));
+        return;
+    }
+
+    if (FFileHelper::SaveStringToFile(CurrentPDBContent, *FilePath))
+    {
+        UE_LOG(LogTemp, Log, TEXT("Structure saved to: %s"), *FilePath);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to save structure to: %s"), *FilePath);
+    }
+}
+
+void APDBViewer::LoadStructureFromFile(const FString& FilePath)
+{
+    FString FileContent;
+    if (FFileHelper::LoadFileToString(FileContent, *FilePath))
+    {
+        UE_LOG(LogTemp, Log, TEXT("Loading structure from: %s"), *FilePath);
+        
+        // Clear existing structure
+        ClearCurrentStructure();
+        
+        // Determine file type by extension
+        FString Extension = FPaths::GetExtension(FilePath).ToLower();
+        
+        if (Extension == TEXT("pdb"))
+        {
+            CurrentPDBContent = FileContent;
+            CurrentStructureID = FPaths::GetBaseFilename(FilePath);
+            ParsePDB(FileContent);
+        }
+        else if (Extension == TEXT("cif"))
+        {
+            CurrentPDBContent = FileContent;
+            CurrentStructureID = FPaths::GetBaseFilename(FilePath);
+            ParseMMCIF(FileContent);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("Unsupported file format: %s"), *Extension);
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to load file: %s"), *FilePath);
+    }
+}
+
+bool APDBViewer::ShowFileDialog(bool bSave, FString& OutFilePath)
+{
+    IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+    if (!DesktopPlatform)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Desktop Platform not available"));
+        return false;
+    }
+
+    TSharedPtr<SWindow> ParentWindow;
+    if (FModuleManager::Get().IsModuleLoaded("MainFrame"))
+    {
+        IMainFrameModule& MainFrame = FModuleManager::LoadModuleChecked<IMainFrameModule>("MainFrame");
+        ParentWindow = MainFrame.GetParentWindow();
+    }
+
+    void* ParentWindowHandle = (ParentWindow.IsValid() && ParentWindow->GetNativeWindow().IsValid())
+        ? ParentWindow->GetNativeWindow()->GetOSWindowHandle()
+        : nullptr;
+
+    TArray<FString> OutFiles;
+    const FString FileTypes = TEXT("PDB Files (*.pdb)|*.pdb|mmCIF Files (*.cif)|*.cif|All Files (*.*)|*.*");
+    const FString DefaultPath = FPaths::ProjectSavedDir();
+    
+    bool bSuccess = false;
+    if (bSave)
+    {
+        bSuccess = DesktopPlatform->SaveFileDialog(
+            ParentWindowHandle,
+            TEXT("Save PDB Structure"),
+            DefaultPath,
+            TEXT("structure.pdb"),
+            FileTypes,
+            EFileDialogFlags::None,
+            OutFiles
+        );
+    }
+    else
+    {
+        bSuccess = DesktopPlatform->OpenFileDialog(
+            ParentWindowHandle,
+            TEXT("Load PDB Structure"),
+            DefaultPath,
+            TEXT(""),
+            FileTypes,
+            EFileDialogFlags::None,
+            OutFiles
+        );
+    }
+
+    if (bSuccess && OutFiles.Num() > 0)
+    {
+        OutFilePath = OutFiles[0];
+        return true;
+    }
+
+    return false;
+}
+
+void APDBViewer::OpenSaveDialog()
+{
+    FString FilePath;
+    if (ShowFileDialog(true, FilePath))
+    {
+        SaveStructureToFile(FilePath);
+    }
+}
+
+void APDBViewer::OpenLoadDialog()
+{
+    FString FilePath;
+    if (ShowFileDialog(false, FilePath))
+    {
+        LoadStructureFromFile(FilePath);
+    }
+}
+
+

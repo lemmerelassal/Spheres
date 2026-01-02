@@ -519,3 +519,5 @@
 /I "C:\Program Files\Epic Games\UE_5.6\Engine\Source\ThirdParty\LibTiff\Source\Win64" 
 /I "C:\Program Files\Epic Games\UE_5.6\Engine\Source\ThirdParty\LibTiff\Source" 
 /I "C:\Program Files\Epic Games\UE_5.6\Engine\Source\ThirdParty\OpenGL" 
+/I "C:\Program Files\Epic Games\UE_5.6\Engine\Source\ThirdParty\Eigen" 
+/I "C:\Program Files\Epic Games\UE_5.6\Engine\Source\ThirdParty\Eigen\Eigen" 

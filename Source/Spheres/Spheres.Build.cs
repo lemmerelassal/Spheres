@@ -32,6 +32,6 @@ public class Spheres : ModuleRules
 		});
 
 		// Private dependencies for your custom modules (like Eigen)
-		PrivateDependencyModuleNames.AddRange(new string[] { "Eigen" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Eigen", "DesktopPlatform", "Slate", "SlateCore" });
 	}
 }
