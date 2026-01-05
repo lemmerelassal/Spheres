@@ -113,17 +113,20 @@ void APDBViewer::ParsePDB(const FString &FileContent)
     TMap<FString, TMap<FString, FVector>> ResidueAtoms;
     TMap<FString, FString> ResidueKeyToName;
     TMap<FString, FString> ResidueKeyToSeq;
+    TMap<FString, FString>  ResidueKeyToChain;
+    TMap<FString, FString> ResidueKeyToRecord;
 
-    FVector Center(0, 0, 0);
     int32 AtomCount = 0;
     const float Scale = 50.f;
 
     bool bHaveFirstChain = false;
     FString FirstChain;
 
+    FString RecordType = "";
     for (const FString &Line : Lines)
     {
-        if (!Line.StartsWith("ATOM"))
+        RecordType = Line.Mid(0, 6);
+        if (!RecordType.StartsWith("HETATM"))
             continue;
 
         FString Chain = Line.Mid(21, 1);
@@ -149,19 +152,19 @@ void APDBViewer::ParsePDB(const FString &FileContent)
         float Z = FCString::Atof(*Line.Mid(46, 8)) * Scale;
 
         FVector Pos(X, Y, Z);
-        Center += Pos;
         AtomCount++;
 
         FString ResidueKey = FString::Printf(TEXT("%s_%s_%s"), *ResidueName, *ResSeq, *Chain);
         ResidueAtoms.FindOrAdd(ResidueKey).Add(AtomName, Pos);
         ResidueKeyToName.FindOrAdd(ResidueKey) = ResidueName;
         ResidueKeyToSeq.FindOrAdd(ResidueKey) = ResSeq;
+        ResidueKeyToChain.FindOrAdd(ResidueKey) = Chain;
+        ResidueKeyToRecord.FindOrAdd(ResidueKey) = RecordType;
     }
 
     if (AtomCount == 0)
         return;
 
-    Center /= AtomCount;
 
     for (auto &Pair : ResidueAtoms)
     {
@@ -173,6 +176,8 @@ void APDBViewer::ParsePDB(const FString &FileContent)
         ResInfo->ResidueName = *ResidueKeyToName.Find(UniqueResidueKey);
         ResInfo->ResidueSeq = *ResidueKeyToSeq.Find(UniqueResidueKey);
         ResInfo->bIsVisible = true;
+        ResInfo->Chain = *ResidueKeyToChain.Find(UniqueResidueKey);
+        ResInfo->RecordType = *ResidueKeyToRecord.Find(UniqueResidueKey);
 
         // Draw atoms for this residue
         for (auto &Atom : Atoms)
@@ -211,7 +216,7 @@ void APDBViewer::ParsePDB(const FString &FileContent)
         }
     }
 
-    UE_LOG(LogTemp, Log, TEXT("Parsed %d atoms from PDB (first chain only)"), AtomCount);
+    UE_LOG(LogTemp, Log, TEXT("Parsed %d atoms from PDB"), AtomCount);
     OnResiduesLoaded.Broadcast();
 }
 
@@ -928,6 +933,32 @@ void APDBViewer::ToggleResidueVisibility(const FString &ResidueKey)
 // Get residue list
 // ----------------------------
 TArray<FString> APDBViewer::GetResidueList() const
+{
+    TArray<FString> ResidueList;
+    ResidueMap.GetKeys(ResidueList);
+    // Sort by sequence number
+    ResidueList.Sort([](const FString &A, const FString &B)
+                     {
+    int32 UnderscoreA = A.Find(TEXT("_"));
+    int32 UnderscoreB = B.Find(TEXT("_"));
+    if (UnderscoreA != INDEX_NONE && UnderscoreB != INDEX_NONE)
+    {
+        FString SeqA = A.Mid(UnderscoreA + 1);
+        FString SeqB = B.Mid(UnderscoreB + 1);
+        int32 SecondUnderA = SeqA.Find(TEXT("_"));
+        int32 SecondUnderB = SeqB.Find(TEXT("_"));
+        if (SecondUnderA != INDEX_NONE) SeqA = SeqA.Left(SecondUnderA);
+        if (SecondUnderB != INDEX_NONE) SeqB = SeqB.Left(SecondUnderB);
+        
+        return FCString::Atoi(*SeqA) < FCString::Atoi(*SeqB);
+    }
+    return A < B; });
+
+    return ResidueList;
+}
+
+
+TArray<FString> APDBViewer::GetLigandList() const
 {
     TArray<FString> ResidueList;
     ResidueMap.GetKeys(ResidueList);

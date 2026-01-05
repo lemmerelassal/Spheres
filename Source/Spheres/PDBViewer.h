@@ -10,7 +10,8 @@ USTRUCT()
 struct FResidueInfo
 {
     GENERATED_BODY()
-    
+    FString RecordType;   // e.g., "HETATM"
+    FString Chain;        // e.g., "A"
     FString ResidueName;  // e.g., "SER"
     FString ResidueSeq;   // e.g., "1313"
     TArray<UStaticMeshComponent*> AtomMeshes;
@@ -104,6 +105,10 @@ FOnResiduesLoaded OnResiduesLoaded;
     
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
     FString GetResidueDisplayName(const FString& ResidueKey) const;
+
+
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
+    TArray<FString> GetLigandList() const;
 
 private:
     // Helper for file dialogs
