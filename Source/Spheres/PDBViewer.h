@@ -5,11 +5,31 @@
 #include "Http.h"
 #include "PDBViewer.generated.h"
 
+// Structure to hold residue metadata during parsing
+USTRUCT()
+struct FResidueMetadata
+{
+    GENERATED_BODY()
+    
+    FString ResidueName;
+    FString ResidueSeq;
+    FString Chain;
+    FString RecordType;
+    
+    FResidueMetadata()
+        : ResidueName(TEXT(""))
+        , ResidueSeq(TEXT(""))
+        , Chain(TEXT(""))
+        , RecordType(TEXT(""))
+    {}
+};
+
 // Structure to hold residue information
 USTRUCT()
 struct FResidueInfo
 {
     GENERATED_BODY()
+    
     FString RecordType;   // e.g., "HETATM"
     FString Chain;        // e.g., "A"
     FString ResidueName;  // e.g., "SER"
@@ -18,7 +38,13 @@ struct FResidueInfo
     TArray<UStaticMeshComponent*> BondMeshes;
     bool bIsVisible;
     
-    FResidueInfo() : bIsVisible(true) {}
+    FResidueInfo()
+        : RecordType(TEXT(""))
+        , Chain(TEXT(""))
+        , ResidueName(TEXT(""))
+        , ResidueSeq(TEXT(""))
+        , bIsVisible(true)
+    {}
 };
 
 UCLASS()
@@ -47,14 +73,43 @@ protected:
     void FetchFileAsync(const FString& URL, TFunction<void(bool, const FString&)> Callback);
     void ParsePDB(const FString& FileContent);
     void ParseMMCIF(const FString& FileContent);
-    void FetchLigandCIF(const FString& ResidueName, const TMap<FString, FVector>& AtomPositions);
-    void ParseLigandCIF(const FString& FileContent, const TMap<FString, FVector>& AtomPositions);
-    void ParseLigandCIFForResidue(const FString& FileContent, const TMap<FString, FVector>& AtomPositions, FResidueInfo* ResInfo);
+    
+    // Batch residue creation
+    void CreateResiduesFromAtomData(
+        const TMap<FString, TMap<FString, FVector>>& ResidueAtoms,
+        const TMap<FString, FResidueMetadata>& Metadata);
+    
+    // Bond parsing
+    void FetchLigandBondsForResidue(
+        const FString& ResidueKey,
+        const FString& ResidueName,
+        const TMap<FString, FVector>& AtomPositions);
+    
+    void ParseLigandCIFForResidue(
+        const FString& FileContent,
+        const TMap<FString, FVector>& AtomPositions,
+        FResidueInfo* ResInfo);
+    
+    // Helper functions
+    FString NormalizeAtomID(const FString& In) const;
+    int32 ParseBondOrder(const FString& OrderStr) const;
 
     // Drawing
-    void DrawSphere(float x, float y, float z, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);
-    void DrawBond(const FVector& Start, const FVector& End, int32 Order, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);
-    FLinearColor ElementColor(const FString& Element);
+    void DrawSphere(
+        float X, float Y, float Z,
+        const FLinearColor& Color,
+        USceneComponent* Parent,
+        TArray<UStaticMeshComponent*>& OutArray);
+    
+    void DrawBond(
+        const FVector& Start,
+        const FVector& End,
+        int32 Order,
+        const FLinearColor& Color,
+        USceneComponent* Parent,
+        TArray<UStaticMeshComponent*>& OutArray);
+    
+    FLinearColor ElementColor(const FString& Element) const;
 
     // Storage for spawned components
     UPROPERTY()
@@ -74,11 +129,11 @@ protected:
     void ClearResidueMap();
 
 public:
+    // Event delegate
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnResiduesLoaded);
 
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnResiduesLoaded);
-
-UPROPERTY(BlueprintAssignable, Category = "PDB Viewer")
-FOnResiduesLoaded OnResiduesLoaded;
+    UPROPERTY(BlueprintAssignable, Category = "PDB Viewer")
+    FOnResiduesLoaded OnResiduesLoaded;
 
     // Save/Load functions
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
@@ -105,7 +160,6 @@ FOnResiduesLoaded OnResiduesLoaded;
     
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
     FString GetResidueDisplayName(const FString& ResidueKey) const;
-
 
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
     TArray<FString> GetLigandList() const;
