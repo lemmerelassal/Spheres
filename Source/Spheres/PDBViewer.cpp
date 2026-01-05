@@ -1,10 +1,9 @@
-// Optimized PDBViewer.cpp
+// PDBViewer.cpp — UE 5.6 compatible version
 
 #include "PDBViewer.h"
 #include "PDBCameraComponent.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpResponse.h"
-#include "DrawDebugHelpers.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -17,890 +16,469 @@
 #include "IDesktopPlatform.h"
 #include "DesktopPlatformModule.h"
 #include "Interfaces/IMainFrameModule.h"
-#include "Async/Async.h"
 
-// Constants
-namespace PDBConstants
+namespace PDB
 {
-    constexpr float ATOM_SCALE = 50.0f;
-    constexpr float SPHERE_SCALE = 0.5f;
-    constexpr float CYLINDER_SCALE = 0.1f;
+    constexpr float SCALE = 50.0f;
+    constexpr float SPHERE_SIZE = 0.5f;
+    constexpr float CYLINDER_SIZE = 0.1f;
     constexpr float BOND_OFFSET = 8.0f;
-    constexpr float CYLINDER_HALF_HEIGHT = 50.0f;
-    constexpr int32 RESERVE_ATOMS = 1000;
-    constexpr int32 RESERVE_BONDS = 1000;
 }
 
 APDBViewer::APDBViewer()
 {
     PrimaryActorTick.bCanEverTick = false;
+    RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 
-    USceneComponent* RootComp = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
-    RootComponent = RootComp;
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> Sphere(TEXT("/Engine/BasicShapes/Sphere"));
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> Cylinder(TEXT("/Engine/BasicShapes/Cylinder"));
+    static ConstructorHelpers::FObjectFinder<UMaterial> Mat(TEXT("/Engine/BasicShapes/BasicShapeMaterial"));
 
-    // Load assets with error checking
-    static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere"));
-    SphereMeshAsset = SphereMesh.Object;
-
-    static ConstructorHelpers::FObjectFinder<UStaticMesh> CylinderMesh(TEXT("/Engine/BasicShapes/Cylinder"));
-    CylinderMeshAsset = CylinderMesh.Object;
-
-    static ConstructorHelpers::FObjectFinder<UMaterial> SphereMat(TEXT("/Engine/BasicShapes/BasicShapeMaterial"));
-    SphereMaterialAsset = SphereMat.Object;
-
-    // Reserve memory to reduce allocations
-    AllAtomMeshes.Reserve(PDBConstants::RESERVE_ATOMS);
-    AllBondMeshes.Reserve(PDBConstants::RESERVE_BONDS);
+    SphereMeshAsset = Sphere.Object;
+    CylinderMeshAsset = Cylinder.Object;
+    SphereMaterialAsset = Mat.Object;
 }
 
 void APDBViewer::BeginPlay()
 {
     Super::BeginPlay();
-    
     FetchAndDisplayStructure(TEXT("5ENB"));
-    
-    if (APDBCameraComponent* CameraActor = GetWorld()->SpawnActor<APDBCameraComponent>(
-        APDBCameraComponent::StaticClass(),
-        GetActorLocation(),
-        FRotator::ZeroRotator))
-    {
-        CameraActor->SetTargetActor(this);
-    }
+
+    if (auto* Cam = GetWorld()->SpawnActor<APDBCameraComponent>(APDBCameraComponent::StaticClass(), GetActorLocation(), FRotator::ZeroRotator))
+        Cam->SetTargetActor(this);
 }
 
-// ----------------------------
-// Fetch Structure (Optimized)
-// ----------------------------
-void APDBViewer::FetchAndDisplayStructure(const FString& PDB_ID)
+void APDBViewer::FetchAndDisplayStructure(const FString& ID)
 {
-    CurrentStructureID = PDB_ID;
-    const FString PDB_URL = FString::Printf(TEXT("https://files.rcsb.org/download/%s.pdb"), *PDB_ID);
-    const FString CIF_URL = FString::Printf(TEXT("https://files.rcsb.org/download/%s.cif"), *PDB_ID);
-
-    UE_LOG(LogTemp, Log, TEXT("Fetching PDB: %s"), *PDB_URL);
-
-    FetchFileAsync(PDB_URL, [this, CIF_URL](bool bSuccess, const FString& Content)
-    {
-        if (bSuccess)
-        {
-            ParsePDB(Content);
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("PDB not found, trying mmCIF"));
-            FetchFileAsync(CIF_URL, [this](bool bSuccess2, const FString& Content2)
-            {
-                if (bSuccess2)
-                {
-                    ParseMMCIF(Content2);
-                }
-                else
-                {
-                    UE_LOG(LogTemp, Error, TEXT("Failed to fetch both PDB and mmCIF"));
-                }
-            });
-        }
+    CurrentStructureID = ID;
+    FString URL = FString::Printf(TEXT("https://files.rcsb.org/download/%s.pdb"), *ID);
+    FetchFileAsync(URL, [this, ID](bool bOK, const FString& Content) {
+        if (bOK) ParsePDB(Content);
+        else FetchFileAsync(FString::Printf(TEXT("https://files.rcsb.org/download/%s.cif"), *ID),
+            [this](bool bOK2, const FString& C) { if (bOK2) ParseMMCIF(C); });
     });
 }
 
-// ----------------------------
-// Async HTTP (Unchanged)
-// ----------------------------
-void APDBViewer::FetchFileAsync(const FString& URL, TFunction<void(bool, const FString&)> Callback)
+void APDBViewer::FetchFileAsync(const FString& URL, TFunction<void(bool, const FString&)> CB)
 {
-    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-    Request->SetURL(URL);
-    Request->SetVerb(TEXT("GET"));
+    auto Req = FHttpModule::Get().CreateRequest();
+    Req->SetURL(URL);
+    Req->SetVerb(TEXT("GET"));
+    Req->OnProcessRequestComplete().BindLambda([CB](FHttpRequestPtr R, FHttpResponsePtr Resp, bool bOK) {
+        CB(bOK && Resp.IsValid() && Resp->GetResponseCode() == 200, bOK ? Resp->GetContentAsString() : TEXT(""));
+    });
+    Req->ProcessRequest();
+}
 
-    Request->OnProcessRequestComplete().BindLambda(
-        [Callback](FHttpRequestPtr Req, FHttpResponsePtr Response, bool bWasSuccessful)
+void APDBViewer::ParsePDB(const FString& Content)
+{
+    CurrentPDBContent = Content;
+    ClearResidueMap();
+
+    TArray<FString> Lines;
+    Content.ParseIntoArrayLines(Lines);
+
+    TMap<FString, TMap<FString, FVector>> ResAtoms;
+    TMap<FString, FResidueMetadata> ResMeta;
+    FString FirstChain;
+
+    for (const auto& L : Lines)
+    {
+        if (L.Len() < 80 || !L.StartsWith(TEXT("HETATM"))) continue;
+
+        FString Chain = L.Mid(21, 1);
+        if (FirstChain.IsEmpty()) FirstChain = Chain;
+        else if (Chain != FirstChain) continue;
+
+        FString Key = FString::Printf(TEXT("%s_%s_%s"),
+            *L.Mid(17, 3).TrimStartAndEnd(),
+            *L.Mid(22, 4).TrimStartAndEnd(),
+            *Chain);
+
+        ResAtoms.FindOrAdd(Key).Add(L.Mid(12, 4).TrimStartAndEnd(),
+            FVector(FCString::Atof(*L.Mid(30, 8)),
+                FCString::Atof(*L.Mid(38, 8)),
+                FCString::Atof(*L.Mid(46, 8))) * PDB::SCALE);
+
+        if (!ResMeta.Contains(Key))
         {
-            if (bWasSuccessful && Response.IsValid() && Response->GetResponseCode() == 200)
-            {
-                Callback(true, Response->GetContentAsString());
-            }
-            else
-            {
-                Callback(false, TEXT(""));
-            }
+            auto& M = ResMeta.Add(Key);
+            M.ResidueName = L.Mid(17, 3).TrimStartAndEnd();
+            M.ResidueSeq = L.Mid(22, 4).TrimStartAndEnd();
+            M.Chain = Chain;
+            M.RecordType = TEXT("HETATM");
+        }
+    }
+
+    CreateResiduesFromAtomData(ResAtoms, ResMeta);
+    OnResiduesLoaded.Broadcast();
+}
+
+void APDBViewer::ParseMMCIF(const FString& Content)
+{
+    CurrentPDBContent = Content;
+    ClearResidueMap();
+
+    TArray<FString> Lines;
+    Content.ParseIntoArrayLines(Lines);
+
+    TArray<FString> Hdrs;
+    TArray<TArray<FString>> AtomTab;
+    int32 XI = -1, YI = -1, ZI = -1, RI = -1, AI = -1, GI = -1, CI = -1, SI = -1;
+    bool bLoop = false;
+
+    for (const auto& L : Lines)
+    {
+        if (L.StartsWith(TEXT("loop_"))) { bLoop = true; Hdrs.Empty(); continue; }
+        if (bLoop && L.StartsWith(TEXT("_atom_site.")))
+        {
+            int32 I = Hdrs.Add(L);
+            if (L.Contains(TEXT("Cartn_x"))) XI = I;
+            else if (L.Contains(TEXT("Cartn_y"))) YI = I;
+            else if (L.Contains(TEXT("Cartn_z"))) ZI = I;
+            else if (L.Contains(TEXT("label_comp_id"))) RI = I;
+            else if (L.Contains(TEXT("label_atom_id"))) AI = I;
+            else if (L.Contains(TEXT("group_PDB"))) GI = I;
+            else if (L.Contains(TEXT("label_asym_id"))) CI = I;
+            else if (L.Contains(TEXT("label_seq_id")) || L.Contains(TEXT("auth_seq_id"))) SI = I;
+            continue;
+        }
+        if (bLoop && !L.StartsWith(TEXT("_")))
+        {
+            TArray<FString> T;
+            L.ParseIntoArrayWS(T);
+            if (T.Num() > FMath::Max3(XI, YI, ZI)) AtomTab.Add(MoveTemp(T));
+        }
+    }
+
+    TMap<FString, TMap<FString, FVector>> ResAtoms;
+    TMap<FString, FResidueMetadata> ResMeta;
+    FString FirstChain;
+
+    for (const auto& R : AtomTab)
+    {
+        if (XI < 0 || YI < 0 || ZI < 0 || RI < 0 || AI < 0) continue;
+        if (GI >= 0 && R.IsValidIndex(GI) && R[GI] != TEXT("ATOM")) continue;
+
+        FString Chain = (CI >= 0 && R.IsValidIndex(CI)) ? R[CI] : TEXT("");
+        if (FirstChain.IsEmpty()) FirstChain = Chain;
+        else if (Chain != FirstChain) continue;
+
+        FString Seq = (SI >= 0 && R.IsValidIndex(SI)) ? R[SI] : TEXT("0");
+        FString Key = FString::Printf(TEXT("%s_%s_%s"), *R[RI], *Seq, *Chain);
+
+        ResAtoms.FindOrAdd(Key).Add(R[AI],
+            FVector(FCString::Atof(*R[XI]),
+                FCString::Atof(*R[YI]),
+                FCString::Atof(*R[ZI])) * PDB::SCALE);
+
+        if (!ResMeta.Contains(Key))
+        {
+            auto& M = ResMeta.Add(Key);
+            M.ResidueName = R[RI];
+            M.ResidueSeq = Seq;
+            M.Chain = Chain;
+            M.RecordType = TEXT("ATOM");
+        }
+    }
+
+    CreateResiduesFromAtomData(ResAtoms, ResMeta);
+    OnResiduesLoaded.Broadcast();
+}
+
+void APDBViewer::CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FVector>>& ResAtoms, const TMap<FString, FResidueMetadata>& Meta)
+{
+    for (const auto& P : ResAtoms)
+    {
+        const auto* M = Meta.Find(P.Key);
+        if (!M) continue;
+
+        auto* Info = new FResidueInfo();
+        Info->ResidueName = M->ResidueName;
+        Info->ResidueSeq = M->ResidueSeq;
+        Info->Chain = M->Chain;
+        Info->RecordType = M->RecordType;
+        Info->bIsVisible = true;
+
+        for (const auto& A : P.Value)
+            DrawSphere(A.Value.X, A.Value.Y, A.Value.Z, GetElementColor(A.Key.Left(1)), GetRootComponent(), Info->AtomMeshes);
+
+        ResidueMap.Add(P.Key, Info);
+        FetchLigandBondsForResidue(P.Key, M->ResidueName, P.Value);
+    }
+}
+
+void APDBViewer::FetchLigandBondsForResidue(const FString& Key, const FString& Name, const TMap<FString, FVector>& Pos)
+{
+    FetchFileAsync(FString::Printf(TEXT("https://files.rcsb.org/ligands/download/%s.cif"), *Name.ToUpper()),
+        [this, Key, Pos](bool bOK, const FString& C) {
+            if (bOK && ResidueMap.Contains(Key))
+                if (auto** Info = ResidueMap.Find(Key))
+                    if (*Info) ParseLigandCIFForResidue(C, Pos, *Info);
         });
-
-    Request->ProcessRequest();
 }
 
-// ----------------------------
-// Parse PDB (Optimized)
-// ----------------------------
-void APDBViewer::ParsePDB(const FString& FileContent)
+void APDBViewer::ParseLigandCIFForResidue(const FString& Content, const TMap<FString, FVector>& Pos, FResidueInfo* Info)
 {
-    CurrentPDBContent = FileContent;
-    ClearResidueMap();
+    if (!Info) return;
+
+    TMap<FString, FVector> NormPos;
+    for (const auto& P : Pos)
+    {
+        FString K;
+        for (const TCHAR C : P.Key) if (FChar::IsAlnum(C)) K.AppendChar(FChar::ToUpper(C));
+        if (!K.IsEmpty()) NormPos.Add(K, P.Value);
+    }
 
     TArray<FString> Lines;
-    FileContent.ParseIntoArrayLines(Lines);
+    Content.ParseIntoArrayLines(Lines);
 
-    // Pre-allocate with estimated size
-    TMap<FString, TMap<FString, FVector>> ResidueAtoms;
-    ResidueAtoms.Reserve(Lines.Num() / 20); // Rough estimate
+    TArray<FString> Hdrs;
+    int32 A1 = -1, A2 = -1, BO = -1;
+    bool bLoop = false;
 
-    TMap<FString, FResidueMetadata> ResidueMetadata;
-    ResidueMetadata.Reserve(Lines.Num() / 20);
-
-    int32 AtomCount = 0;
-    FString FirstChain;
-    bool bHaveFirstChain = false;
-
-    // Single pass parsing
-    for (const FString& Line : Lines)
+    for (const auto& L : Lines)
     {
-        if (Line.Len() < 80 || !Line.StartsWith(TEXT("HETATM")))
-            continue;
-
-        const FString Chain = Line.Mid(21, 1);
-
-        if (!bHaveFirstChain)
+        if (L.StartsWith(TEXT("loop_"))) { bLoop = true; Hdrs.Empty(); A1 = A2 = BO = -1; continue; }
+        if (bLoop && L.StartsWith(TEXT("_")))
         {
-            FirstChain = Chain;
-            bHaveFirstChain = true;
-        }
-
-        if (Chain != FirstChain)
-            continue;
-
-        // Parse atom data
-        const FString AtomName = Line.Mid(12, 4).TrimStartAndEnd();
-        const FString ResidueName = Line.Mid(17, 3).TrimStartAndEnd();
-        const FString ResSeq = Line.Mid(22, 4).TrimStartAndEnd();
-        
-        FString Element = Line.Mid(76, 2).TrimStartAndEnd().ToUpper();
-        if (Element.IsEmpty() && !AtomName.IsEmpty())
-        {
-            Element = AtomName.Left(1).ToUpper();
-        }
-
-        const float X = FCString::Atof(*Line.Mid(30, 8)) * PDBConstants::ATOM_SCALE;
-        const float Y = FCString::Atof(*Line.Mid(38, 8)) * PDBConstants::ATOM_SCALE;
-        const float Z = FCString::Atof(*Line.Mid(46, 8)) * PDBConstants::ATOM_SCALE;
-
-        const FString ResidueKey = FString::Printf(TEXT("%s_%s_%s"), *ResidueName, *ResSeq, *Chain);
-        
-        ResidueAtoms.FindOrAdd(ResidueKey).Add(AtomName, FVector(X, Y, Z));
-        
-        // Store metadata only once per residue
-        if (!ResidueMetadata.Contains(ResidueKey))
-        {
-            FResidueMetadata& Meta = ResidueMetadata.Add(ResidueKey);
-            Meta.ResidueName = ResidueName;
-            Meta.ResidueSeq = ResSeq;
-            Meta.Chain = Chain;
-            Meta.RecordType = TEXT("HETATM");
-        }
-
-        ++AtomCount;
-    }
-
-    if (AtomCount == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("No atoms found in PDB"));
-        return;
-    }
-
-    // Batch create residues
-    CreateResiduesFromAtomData(ResidueAtoms, ResidueMetadata);
-
-    UE_LOG(LogTemp, Log, TEXT("Parsed %d atoms from PDB"), AtomCount);
-    OnResiduesLoaded.Broadcast();
-}
-
-// ----------------------------
-// Parse mmCIF (Optimized)
-// ----------------------------
-void APDBViewer::ParseMMCIF(const FString& FileContent)
-{
-    CurrentPDBContent = FileContent;
-    ClearResidueMap();
-
-    TArray<FString> Lines;
-    FileContent.ParseIntoArrayLines(Lines);
-
-    // Parse headers
-    TArray<FString> Headers;
-    TArray<TArray<FString>> AtomTable;
-    AtomTable.Reserve(Lines.Num() / 2);
-
-    int32 XIdx = -1, YIdx = -1, ZIdx = -1, ResIdx = -1, AtomIdx = -1;
-    int32 ElementIdx = -1, GroupIdx = -1, ChainIdx = -1, SeqIdx = -1;
-    bool bInLoop = false;
-
-    for (const FString& Line : Lines)
-    {
-        if (Line.StartsWith(TEXT("loop_")))
-        {
-            bInLoop = true;
-            Headers.Empty();
+            int32 I = Hdrs.Add(L);
+            FString Lo = L.ToLower();
+            if (Lo.Contains(TEXT("atom_id_1")) || Lo.Contains(TEXT("atom_1"))) A1 = I;
+            else if (Lo.Contains(TEXT("atom_id_2")) || Lo.Contains(TEXT("atom_2"))) A2 = I;
+            else if (Lo.Contains(TEXT("value_order")) || Lo.Contains(TEXT("bond_order"))) BO = I;
             continue;
         }
-
-        if (bInLoop && Line.StartsWith(TEXT("_atom_site.")))
+        if (bLoop && !L.StartsWith(TEXT("_")) && !L.StartsWith(TEXT("data_")))
         {
-            const int32 Idx = Headers.Add(Line);
-            
-            if (Line.Contains(TEXT("Cartn_x"))) XIdx = Idx;
-            else if (Line.Contains(TEXT("Cartn_y"))) YIdx = Idx;
-            else if (Line.Contains(TEXT("Cartn_z"))) ZIdx = Idx;
-            else if (Line.Contains(TEXT("label_comp_id"))) ResIdx = Idx;
-            else if (Line.Contains(TEXT("label_atom_id"))) AtomIdx = Idx;
-            else if (Line.Contains(TEXT("type_symbol"))) ElementIdx = Idx;
-            else if (Line.Contains(TEXT("group_PDB"))) GroupIdx = Idx;
-            else if (Line.Contains(TEXT("label_asym_id"))) ChainIdx = Idx;
-            else if (Line.Contains(TEXT("label_seq_id")) || Line.Contains(TEXT("auth_seq_id"))) SeqIdx = Idx;
-            
-            continue;
+            if (A1 < 0 || A2 < 0) continue;
+            TArray<FString> T;
+            L.ParseIntoArrayWS(T);
+            if (T.Num() <= FMath::Max(A1, A2)) continue;
+
+            FString ID1 = NormalizeAtomID(T[A1]);
+            FString ID2 = NormalizeAtomID(T[A2]);
+            int32 Ord = ParseBondOrder(BO >= 0 && T.IsValidIndex(BO) ? T[BO] : TEXT("1"));
+
+            const auto* P1 = NormPos.Find(ID1);
+            const auto* P2 = NormPos.Find(ID2);
+            if (P1 && P2) DrawBond(*P1, *P2, Ord, FLinearColor::Gray, GetRootComponent(), Info->BondMeshes);
         }
-
-        if (bInLoop && !Line.StartsWith(TEXT("_")))
-        {
-            TArray<FString> Tokens;
-            Line.ParseIntoArrayWS(Tokens);
-            
-            if (Tokens.Num() > FMath::Max3(XIdx, YIdx, ZIdx))
-            {
-                AtomTable.Add(MoveTemp(Tokens));
-            }
-        }
-    }
-
-    // Process atoms
-    TMap<FString, TMap<FString, FVector>> ResidueAtoms;
-    TMap<FString, FResidueMetadata> ResidueMetadata;
-    ResidueAtoms.Reserve(AtomTable.Num() / 20);
-
-    FString FirstChain;
-    bool bHaveFirstChain = false;
-    int32 AtomCount = 0;
-
-    for (const TArray<FString>& Row : AtomTable)
-    {
-        if (XIdx < 0 || YIdx < 0 || ZIdx < 0 || ResIdx < 0 || AtomIdx < 0)
-            continue;
-
-        if (GroupIdx >= 0 && Row.IsValidIndex(GroupIdx) && Row[GroupIdx] != TEXT("ATOM"))
-            continue;
-
-        const FString Chain = (ChainIdx >= 0 && Row.IsValidIndex(ChainIdx)) ? Row[ChainIdx] : TEXT("");
-        
-        if (!bHaveFirstChain)
-        {
-            FirstChain = Chain;
-            bHaveFirstChain = true;
-        }
-        
-        if (Chain != FirstChain)
-            continue;
-
-        const float X = FCString::Atof(*Row[XIdx]) * PDBConstants::ATOM_SCALE;
-        const float Y = FCString::Atof(*Row[YIdx]) * PDBConstants::ATOM_SCALE;
-        const float Z = FCString::Atof(*Row[ZIdx]) * PDBConstants::ATOM_SCALE;
-        
-        const FString Residue = Row[ResIdx];
-        const FString AtomName = Row[AtomIdx];
-        const FString Seq = (SeqIdx >= 0 && Row.IsValidIndex(SeqIdx)) ? Row[SeqIdx] : TEXT("0");
-        
-        const FString ResidueKey = FString::Printf(TEXT("%s_%s_%s"), *Residue, *Seq, *Chain);
-        
-        ResidueAtoms.FindOrAdd(ResidueKey).Add(AtomName, FVector(X, Y, Z));
-        
-        if (!ResidueMetadata.Contains(ResidueKey))
-        {
-            FResidueMetadata& Meta = ResidueMetadata.Add(ResidueKey);
-            Meta.ResidueName = Residue;
-            Meta.ResidueSeq = Seq;
-            Meta.Chain = Chain;
-            Meta.RecordType = TEXT("ATOM");
-        }
-
-        ++AtomCount;
-    }
-
-    if (AtomCount == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("No atoms found in mmCIF"));
-        return;
-    }
-
-    CreateResiduesFromAtomData(ResidueAtoms, ResidueMetadata);
-
-    UE_LOG(LogTemp, Log, TEXT("Parsed %d atoms from mmCIF"), AtomCount);
-    OnResiduesLoaded.Broadcast();
-}
-
-// ----------------------------
-// Batch Residue Creation (New)
-// ----------------------------
-void APDBViewer::CreateResiduesFromAtomData(
-    const TMap<FString, TMap<FString, FVector>>& ResidueAtoms,
-    const TMap<FString, FResidueMetadata>& Metadata)
-{
-    for (const auto& Pair : ResidueAtoms)
-    {
-        const FString& ResidueKey = Pair.Key;
-        const TMap<FString, FVector>& Atoms = Pair.Value;
-        
-        const FResidueMetadata* Meta = Metadata.Find(ResidueKey);
-        if (!Meta)
-            continue;
-
-        FResidueInfo* ResInfo = new FResidueInfo();
-        ResInfo->ResidueName = Meta->ResidueName;
-        ResInfo->ResidueSeq = Meta->ResidueSeq;
-        ResInfo->Chain = Meta->Chain;
-        ResInfo->RecordType = Meta->RecordType;
-        ResInfo->bIsVisible = true;
-        
-        ResInfo->AtomMeshes.Reserve(Atoms.Num());
-
-        // Draw atoms
-        for (const auto& Atom : Atoms)
-        {
-            DrawSphere(Atom.Value.X, Atom.Value.Y, Atom.Value.Z,
-                      ElementColor(Atom.Key.Left(1)),
-                      GetRootComponent(),
-                      ResInfo->AtomMeshes);
-        }
-
-        ResidueMap.Add(ResidueKey, ResInfo);
-
-        // Fetch bonds asynchronously
-        FetchLigandBondsForResidue(ResidueKey, Meta->ResidueName, Atoms);
+        else if (bLoop && L.StartsWith(TEXT("data_"))) break;
     }
 }
 
-// ----------------------------
-// Fetch Bonds (Optimized)
-// ----------------------------
-void APDBViewer::FetchLigandBondsForResidue(
-    const FString& ResidueKey,
-    const FString& ResidueName,
-    const TMap<FString, FVector>& AtomPositions)
-{
-    const FString URL = FString::Printf(
-        TEXT("https://files.rcsb.org/ligands/download/%s.cif"),
-        *ResidueName.ToUpper());
-
-    TMap<FString, FVector> AtomPosCopy = AtomPositions;
-    
-    FetchFileAsync(URL, [this, ResidueKey, AtomPosCopy](bool bSuccess, const FString& Content)
-    {
-        if (bSuccess)
-        {
-            FResidueInfo** ResInfoPtr = ResidueMap.Find(ResidueKey);
-            if (ResInfoPtr && *ResInfoPtr)
-            {
-                ParseLigandCIFForResidue(Content, AtomPosCopy, *ResInfoPtr);
-            }
-        }
-    });
-}
-
-// ----------------------------
-// Parse CIF Bonds (Optimized)
-// ----------------------------
-void APDBViewer::ParseLigandCIFForResidue(
-    const FString& FileContent,
-    const TMap<FString, FVector>& AtomPositions,
-    FResidueInfo* ResInfo)
-{
-    if (!ResInfo)
-        return;
-
-    // Normalize atom IDs once
-    TMap<FString, FVector> NormPositions;
-    NormPositions.Reserve(AtomPositions.Num());
-    
-    for (const auto& Pair : AtomPositions)
-    {
-        const FString Key = NormalizeAtomID(Pair.Key);
-        if (!Key.IsEmpty())
-        {
-            NormPositions.Add(Key, Pair.Value);
-        }
-    }
-
-    // Parse bonds
-    TArray<FString> Lines;
-    FileContent.ParseIntoArrayLines(Lines);
-
-    bool bInBondLoop = false;
-    TArray<FString> Headers;
-    int32 Atom1Idx = -1, Atom2Idx = -1, BondOrderIdx = -1;
-
-    for (const FString& Line : Lines)
-    {
-        if (Line.StartsWith(TEXT("loop_")))
-        {
-            bInBondLoop = true;
-            Headers.Empty();
-            Atom1Idx = Atom2Idx = BondOrderIdx = -1;
-            continue;
-        }
-
-        if (bInBondLoop && Line.StartsWith(TEXT("_")))
-        {
-            const int32 Idx = Headers.Add(Line);
-            const FString Lower = Line.ToLower();
-            
-            if (Lower.Contains(TEXT("atom_id_1")) || Lower.Contains(TEXT("atom_1")))
-                Atom1Idx = Idx;
-            else if (Lower.Contains(TEXT("atom_id_2")) || Lower.Contains(TEXT("atom_2")))
-                Atom2Idx = Idx;
-            else if (Lower.Contains(TEXT("value_order")) || Lower.Contains(TEXT("bond_order")))
-                BondOrderIdx = Idx;
-            
-            continue;
-        }
-
-        if (bInBondLoop && !Line.StartsWith(TEXT("_")))
-        {
-            if (Atom1Idx < 0 || Atom2Idx < 0)
-                continue;
-
-            TArray<FString> Tokens;
-            Line.ParseIntoArrayWS(Tokens);
-
-            if (Tokens.Num() <= FMath::Max(Atom1Idx, Atom2Idx))
-                continue;
-
-            const FString Id1 = NormalizeAtomID(Tokens[Atom1Idx]);
-            const FString Id2 = NormalizeAtomID(Tokens[Atom2Idx]);
-            const int32 Order = ParseBondOrder(
-                BondOrderIdx >= 0 && Tokens.IsValidIndex(BondOrderIdx) ? Tokens[BondOrderIdx] : TEXT("1"));
-
-            const FVector* P1 = NormPositions.Find(Id1);
-            const FVector* P2 = NormPositions.Find(Id2);
-
-            if (P1 && P2)
-            {
-                DrawBond(*P1, *P2, Order, FLinearColor::Gray, GetRootComponent(), ResInfo->BondMeshes);
-            }
-        }
-
-        if (bInBondLoop && Line.StartsWith(TEXT("data_")))
-        {
-            break; // Exit loop
-        }
-    }
-}
-
-// ----------------------------
-// Helper: Normalize Atom ID
-// ----------------------------
 FString APDBViewer::NormalizeAtomID(const FString& In) const
 {
-    FString Result;
-    Result.Reserve(In.Len());
-    
-    for (const TCHAR& C : In)
-    {
-        if (FChar::IsAlnum(C))
-        {
-            Result.AppendChar(FChar::ToUpper(C));
-        }
-    }
-    
-    return Result;
+    FString Out;
+    for (const TCHAR C : In) if (FChar::IsAlnum(C)) Out.AppendChar(FChar::ToUpper(C));
+    return Out;
 }
 
-// ----------------------------
-// Helper: Parse Bond Order
-// ----------------------------
-int32 APDBViewer::ParseBondOrder(const FString& OrderStr) const
+int32 APDBViewer::ParseBondOrder(const FString& S) const
 {
-    const FString Lower = OrderStr.ToLower();
-    
-    if (Lower.Contains(TEXT("ar")) || Lower.Contains(TEXT("aromatic")))
-        return 1;
-    
-    if (Lower.Contains(TEXT("doub")) || Lower.Equals(TEXT("d")))
-        return 2;
-    
-    if (Lower.Contains(TEXT("trip")) || Lower.Equals(TEXT("t")))
-        return 3;
-    
-    const int32 Parsed = FCString::Atoi(*OrderStr);
-    return (Parsed > 0 && Parsed <= 3) ? Parsed : 1;
+    if (S.Len() == 1 && S[0] >= '1' && S[0] <= '3') return S[0] - '0';
+    FString L = S.ToLower();
+    if (L.Contains(TEXT("ar"))) return 1;
+    if (L.Contains(TEXT("doub")) || L.Equals(TEXT("d"))) return 2;
+    if (L.Contains(TEXT("trip")) || L.Equals(TEXT("t"))) return 3;
+    return FMath::Clamp(FCString::Atoi(*S), 1, 3);
 }
 
-// ----------------------------
-// Draw Sphere (Optimized)
-// ----------------------------
-void APDBViewer::DrawSphere(
-    float X, float Y, float Z,
-    const FLinearColor& Color,
-    USceneComponent* Parent,
-    TArray<UStaticMeshComponent*>& OutArray)
+void APDBViewer::DrawSphere(float X, float Y, float Z, const FLinearColor& Col, USceneComponent* Par, TArray<UStaticMeshComponent*>& Out)
 {
-    if (!SphereMeshAsset || !SphereMaterialAsset || !Parent)
-        return;
+    if (!SphereMeshAsset || !SphereMaterialAsset || !Par) return;
 
-    UStaticMeshComponent* Sphere = NewObject<UStaticMeshComponent>(this);
-    Sphere->SetStaticMesh(SphereMeshAsset);
-    Sphere->SetWorldScale3D(FVector(PDBConstants::SPHERE_SCALE));
-    Sphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-    
-    // Create material instance
-    UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
-    Mat->SetVectorParameterValue(TEXT("Color"), Color);
+    auto* Sph = NewObject<UStaticMeshComponent>(this);
+    Sph->SetStaticMesh(SphereMeshAsset);
+    Sph->SetWorldScale3D(FVector(PDB::SPHERE_SIZE));
+    Sph->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    auto* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, Sph);
+    Mat->SetVectorParameterValue(TEXT("Color"), Col);
     Mat->SetScalarParameterValue(TEXT("EmissiveIntensity"), 5.0f);
-    Sphere->SetMaterial(0, Mat);
+    Sph->SetMaterial(0, Mat);
 
-    Sphere->AttachToComponent(Parent, FAttachmentTransformRules::KeepWorldTransform);
-    
-    const FVector WorldPos(X, Y, Z);
-    const FVector LocalPos = Parent->GetComponentTransform().InverseTransformPosition(WorldPos);
-    Sphere->SetRelativeLocation(LocalPos);
-    
-    Sphere->RegisterComponent();
+    Sph->AttachToComponent(Par, FAttachmentTransformRules::KeepWorldTransform);
+    Sph->SetRelativeLocation(Par->GetComponentTransform().InverseTransformPosition(FVector(X, Y, Z)));
+    Sph->RegisterComponent();
 
-    OutArray.Add(Sphere);
-    AllAtomMeshes.Add(Sphere);
+    Out.Add(Sph);
+    AllAtomMeshes.Add(Sph);
 }
 
-// ----------------------------
-// Draw Bond (Optimized)
-// ----------------------------
-void APDBViewer::DrawBond(
-    const FVector& Start,
-    const FVector& End,
-    int32 Order,
-    const FLinearColor& Color,
-    USceneComponent* Parent,
-    TArray<UStaticMeshComponent*>& OutArray)
+void APDBViewer::DrawBond(const FVector& S, const FVector& E, int32 Ord, const FLinearColor& Col, USceneComponent* Par, TArray<UStaticMeshComponent*>& Out)
 {
-    if (!CylinderMeshAsset || !SphereMaterialAsset || !Parent)
-        return;
+    if (!CylinderMeshAsset || !SphereMaterialAsset || !Par) return;
 
-    const FVector BondVector = End - Start;
-    const float Length = BondVector.Size();
-    const FVector MidPoint = Start + 0.5f * BondVector;
-    const FRotator Rotation = FRotationMatrix::MakeFromZ(BondVector).Rotator();
-    const float ZScale = Length / (2.0f * PDBConstants::CYLINDER_HALF_HEIGHT);
+    FVector V = E - S;
+    float Len = V.Size();
+    if (Len < KINDA_SMALL_NUMBER) return;
 
-    auto CreateCylinder = [&](const FVector& Position)
+    FVector Mid = S + V * 0.5f;
+    FRotator Rot = FRotationMatrix::MakeFromZ(V).Rotator();
+    float Scale = Len / 100.0f;
+
+    auto MakeCyl = [&](const FVector& Pos)
     {
-        UStaticMeshComponent* Cylinder = NewObject<UStaticMeshComponent>(this);
-        Cylinder->SetStaticMesh(CylinderMeshAsset);
-        Cylinder->SetWorldLocation(Position);
-        Cylinder->SetWorldRotation(Rotation);
-        Cylinder->SetWorldScale3D(FVector(PDBConstants::CYLINDER_SCALE, PDBConstants::CYLINDER_SCALE, ZScale));
-        Cylinder->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-        
-        UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, this);
-        Mat->SetVectorParameterValue(TEXT("Color"), Color);
-        Cylinder->SetMaterial(0, Mat);
-        
-        Cylinder->AttachToComponent(Parent, FAttachmentTransformRules::KeepWorldTransform);
-        Cylinder->RegisterComponent();
-        
-        OutArray.Add(Cylinder);
-        AllBondMeshes.Add(Cylinder);
+        auto* Cyl = NewObject<UStaticMeshComponent>(this);
+        Cyl->SetStaticMesh(CylinderMeshAsset);
+        Cyl->SetWorldLocation(Pos);
+        Cyl->SetWorldRotation(Rot);
+        Cyl->SetWorldScale3D(FVector(PDB::CYLINDER_SIZE, PDB::CYLINDER_SIZE, Scale));
+        Cyl->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        auto* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, Cyl);
+        Mat->SetVectorParameterValue(TEXT("Color"), Col);
+        Cyl->SetMaterial(0, Mat);
+        Cyl->AttachToComponent(Par, FAttachmentTransformRules::KeepWorldTransform);
+        Cyl->RegisterComponent();
+        Out.Add(Cyl);
+        AllBondMeshes.Add(Cyl);
     };
 
-    if (Order <= 1)
-    {
-        CreateCylinder(MidPoint);
-        return;
-    }
+    if (Ord <= 1) { MakeCyl(Mid); return; }
 
-    // Calculate perpendicular vector
-    FVector Perp = FVector::CrossProduct(BondVector.GetSafeNormal(), FVector::UpVector);
-    if (Perp.SizeSquared() < KINDA_SMALL_NUMBER)
-    {
-        Perp = FVector::CrossProduct(BondVector.GetSafeNormal(), FVector::RightVector);
-    }
+    FVector Perp = FVector::CrossProduct(V.GetSafeNormal(), FVector::UpVector);
+    if (Perp.SizeSquared() < KINDA_SMALL_NUMBER) Perp = FVector::CrossProduct(V.GetSafeNormal(), FVector::RightVector);
     Perp.Normalize();
+    FVector Off = Perp * PDB::BOND_OFFSET;
 
-    if (Order == 2)
-    {
-        CreateCylinder(MidPoint + Perp * PDBConstants::BOND_OFFSET);
-        CreateCylinder(MidPoint - Perp * PDBConstants::BOND_OFFSET);
-    }
-    else if (Order == 3)
-    {
-        CreateCylinder(MidPoint);
-        CreateCylinder(MidPoint + Perp * PDBConstants::BOND_OFFSET);
-        CreateCylinder(MidPoint - Perp * PDBConstants::BOND_OFFSET);
-    }
-    else
-    {
-        CreateCylinder(MidPoint);
-    }
+    if (Ord == 2) { MakeCyl(Mid + Off); MakeCyl(Mid - Off); }
+    else if (Ord == 3) { MakeCyl(Mid); MakeCyl(Mid + Off); MakeCyl(Mid - Off); }
+    else MakeCyl(Mid);
 }
 
-// ----------------------------
-// Element Colors (Optimized with static map)
-// ----------------------------
-FLinearColor APDBViewer::ElementColor(const FString& Element) const
+FLinearColor APDBViewer::GetElementColor(const FString& E) const
 {
-    static const TMap<FString, FLinearColor> ColorMap = {
-        {TEXT("C"), FLinearColor(0.1f, 0.1f, 0.1f)},
-        {TEXT("O"), FLinearColor::Red},
-        {TEXT("H"), FLinearColor::White},
-        {TEXT("D"), FLinearColor::White},
-        {TEXT("N"), FLinearColor::Blue},
-        {TEXT("S"), FLinearColor::Yellow},
-        {TEXT("CL"), FLinearColor(0.0f, 1.0f, 0.0f)},
-        {TEXT("P"), FLinearColor(1.0f, 0.5f, 0.0f)},
-        {TEXT("F"), FLinearColor(0.0f, 1.0f, 0.0f)},
-        {TEXT("BR"), FLinearColor(0.6f, 0.2f, 0.2f)},
-        {TEXT("I"), FLinearColor(0.4f, 0.0f, 0.8f)},
-        {TEXT("FE"), FLinearColor(0.8f, 0.4f, 0.0f)},
-        {TEXT("MG"), FLinearColor(0.0f, 0.8f, 0.0f)},
-        {TEXT("ZN"), FLinearColor(0.5f, 0.5f, 0.5f)},
-        {TEXT("CA"), FLinearColor(0.2f, 0.6f, 1.0f)},
-        {TEXT("NA"), FLinearColor(0.0f, 0.0f, 1.0f)},
-        {TEXT("K"), FLinearColor(0.5f, 0.0f, 1.0f)},
-        {TEXT("CU"), FLinearColor(1.0f, 0.5f, 0.0f)},
-        {TEXT("B"), FLinearColor(1.0f, 0.7f, 0.7f)}
+    static const TMap<FString, FLinearColor> Colors = {
+        {TEXT("C"), FLinearColor(0.1f,0.1f,0.1f)}, {TEXT("O"), FLinearColor::Red}, {TEXT("H"), FLinearColor::White},
+        {TEXT("D"), FLinearColor::White}, {TEXT("N"), FLinearColor::Blue}, {TEXT("S"), FLinearColor::Yellow},
+        {TEXT("CL"), FLinearColor(0,1,0)}, {TEXT("P"), FLinearColor(1,0.5f,0)}, {TEXT("F"), FLinearColor(0,1,0)},
+        {TEXT("BR"), FLinearColor(0.6f,0.2f,0.2f)}, {TEXT("I"), FLinearColor(0.4f,0,0.8f)},
+        {TEXT("FE"), FLinearColor(0.8f,0.4f,0)}, {TEXT("MG"), FLinearColor(0,0.8f,0)},
+        {TEXT("ZN"), FLinearColor(0.5f,0.5f,0.5f)}, {TEXT("CA"), FLinearColor(0.2f,0.6f,1)},
+        {TEXT("NA"), FLinearColor(0,0,1)}, {TEXT("K"), FLinearColor(0.5f,0,1)}, {TEXT("CU"), FLinearColor(1,0.5f,0)}, {TEXT("B"), FLinearColor(1,0.7f,0.7f)}
     };
-
-    const FLinearColor* Found = ColorMap.Find(Element.ToUpper());
-    return Found ? *Found : FLinearColor::Gray;
+    const auto* C = Colors.Find(E.ToUpper());
+    return C ? *C : FLinearColor::Gray;
 }
 
-// ----------------------------
-// Cleanup
-// ----------------------------
 void APDBViewer::ClearResidueMap()
 {
-    for (auto& Pair : ResidueMap)
-    {
-        delete Pair.Value;
-    }
+    for (auto& P : ResidueMap) delete P.Value;
     ResidueMap.Empty();
 }
 
 void APDBViewer::ClearCurrentStructure()
 {
     ClearResidueMap();
-
-    for (UStaticMeshComponent* Mesh : AllAtomMeshes)
-    {
-        if (Mesh && IsValid(Mesh))
-        {
-            Mesh->DestroyComponent();
-        }
-    }
+    for (auto* M : AllAtomMeshes) if (M && IsValid(M)) M->DestroyComponent();
+    for (auto* M : AllBondMeshes) if (M && IsValid(M)) M->DestroyComponent();
     AllAtomMeshes.Empty();
-
-    for (UStaticMeshComponent* Mesh : AllBondMeshes)
-    {
-        if (Mesh && IsValid(Mesh))
-        {
-            Mesh->DestroyComponent();
-        }
-    }
     AllBondMeshes.Empty();
-
-    UE_LOG(LogTemp, Log, TEXT("Cleared current structure"));
 }
 
-// ----------------------------
-// Residue Management
-// ----------------------------
-void APDBViewer::ToggleResidueVisibility(const FString& ResidueKey)
+void APDBViewer::ToggleResidueVisibility(const FString& Key)
 {
-    FResidueInfo** ResInfoPtr = ResidueMap.Find(ResidueKey);
-    if (!ResInfoPtr || !*ResInfoPtr)
-        return;
-
-    FResidueInfo* ResInfo = *ResInfoPtr;
-    ResInfo->bIsVisible = !ResInfo->bIsVisible;
-
-    for (UStaticMeshComponent* Mesh : ResInfo->AtomMeshes)
-    {
-        if (Mesh && IsValid(Mesh))
-        {
-            Mesh->SetVisibility(ResInfo->bIsVisible);
-        }
-    }
-
-    for (UStaticMeshComponent* Mesh : ResInfo->BondMeshes)
-    {
-        if (Mesh && IsValid(Mesh))
-        {
-            Mesh->SetVisibility(ResInfo->bIsVisible);
-        }
-    }
-
-    UE_LOG(LogTemp, Log, TEXT("Toggled %s: %s"), *ResidueKey, ResInfo->bIsVisible ? TEXT("ON") : TEXT("OFF"));
+    auto** InfoPtr = ResidueMap.Find(Key);
+    if (!InfoPtr || !*InfoPtr) return;
+    auto* Info = *InfoPtr;
+    Info->bIsVisible = !Info->bIsVisible;
+    for (auto* M : Info->AtomMeshes) if (M) M->SetVisibility(Info->bIsVisible);
+    for (auto* M : Info->BondMeshes) if (M) M->SetVisibility(Info->bIsVisible);
 }
 
 TArray<FString> APDBViewer::GetResidueList() const
 {
     TArray<FString> List;
     ResidueMap.GetKeys(List);
-    
-    List.Sort([](const FString& A, const FString& B)
-    {
-        int32 UnderA = A.Find(TEXT("_"));
-        int32 UnderB = B.Find(TEXT("_"));
-        
-        if (UnderA != INDEX_NONE && UnderB != INDEX_NONE)
+    List.Sort([](const FString& A, const FString& B) {
+        int32 U1, U2;
+        if (!A.FindChar('_', U1) || !B.FindChar('_', U2))
+            return A < B;
+
+        int32 U3 = A.Find(TEXT("_"), ESearchCase::IgnoreCase, ESearchDir::FromStart, U1 + 1);
+        int32 U4 = B.Find(TEXT("_"), ESearchCase::IgnoreCase, ESearchDir::FromStart, U2 + 1);
+
+        if (U3 != INDEX_NONE && U4 != INDEX_NONE)
         {
-            FString SeqA = A.Mid(UnderA + 1);
-            FString SeqB = B.Mid(UnderB + 1);
-            
-            int32 SecondUnderA = SeqA.Find(TEXT("_"));
-            int32 SecondUnderB = SeqB.Find(TEXT("_"));
-            
-            if (SecondUnderA != INDEX_NONE) SeqA = SeqA.Left(SecondUnderA);
-            if (SecondUnderB != INDEX_NONE) SeqB = SeqB.Left(SecondUnderB);
-            
-            return FCString::Atoi(*SeqA) < FCString::Atoi(*SeqB);
+            int32 NumA = FCString::Atoi(*A.Mid(U1 + 1, U3 - U1 - 1));
+            int32 NumB = FCString::Atoi(*B.Mid(U2 + 1, U4 - U2 - 1));
+            return NumA < NumB;
         }
         return A < B;
     });
-
     return List;
 }
 
-TArray<FString> APDBViewer::GetLigandList() const
+TArray<FString> APDBViewer::GetLigandList() const { return GetResidueList(); }
+
+FString APDBViewer::GetResidueDisplayName(const FString& Key) const
 {
-    return GetResidueList(); // Same implementation
+    const auto* P = ResidueMap.Find(Key);
+    return (P && *P)
+        ? FString::Printf(TEXT("%s %s"), *(*P)->ResidueName, *(*P)->ResidueSeq)
+        : Key;
 }
 
-FString APDBViewer::GetResidueDisplayName(const FString& ResidueKey) const
-{
-    FResidueInfo* const* ResInfoPtr = ResidueMap.Find(ResidueKey);
-    if (!ResInfoPtr || !*ResInfoPtr)
-        return ResidueKey;
-    
-    FResidueInfo* ResInfo = *ResInfoPtr;
-    return FString::Printf(TEXT("%s %s"), *ResInfo->ResidueName, *ResInfo->ResidueSeq);
-}
-
-// ----------------------------
-// File Operations
-// ----------------------------
-void APDBViewer::SaveStructureToFile(const FString& FilePath)
+void APDBViewer::SaveStructureToFile(const FString& Path)
 {
     if (CurrentPDBContent.IsEmpty())
     {
-        UE_LOG(LogTemp, Warning, TEXT("No structure data to save"));
+        UE_LOG(LogTemp, Warning, TEXT("No data to save"));
         return;
     }
 
-    if (FFileHelper::SaveStringToFile(CurrentPDBContent, *FilePath))
+    if (FFileHelper::SaveStringToFile(CurrentPDBContent, *Path))
     {
-        UE_LOG(LogTemp, Log, TEXT("Saved structure to: %s"), *FilePath);
+        UE_LOG(LogTemp, Log, TEXT("Saved: %s"), *Path);
     }
     else
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to save structure to: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("Failed: %s"), *Path);
     }
 }
 
-void APDBViewer::LoadStructureFromFile(const FString& FilePath)
+void APDBViewer::LoadStructureFromFile(const FString& Path)
 {
-    FString FileContent;
-    if (!FFileHelper::LoadFileToString(FileContent, *FilePath))
+    FString Content;
+    if (!FFileHelper::LoadFileToString(Content, *Path))
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to load file: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("Failed to load: %s"), *Path);
         return;
     }
 
-    UE_LOG(LogTemp, Log, TEXT("Loading structure from: %s"), *FilePath);
     ClearCurrentStructure();
-    
-    const FString Extension = FPaths::GetExtension(FilePath).ToLower();
-    CurrentStructureID = FPaths::GetBaseFilename(FilePath);
-    CurrentPDBContent = FileContent;
+    CurrentStructureID = FPaths::GetBaseFilename(Path);
+    CurrentPDBContent = MoveTemp(Content);
 
-    if (Extension == TEXT("pdb"))
-    {
-        ParsePDB(FileContent);
-    }
-    else if (Extension == TEXT("cif"))
-    {
-        ParseMMCIF(FileContent);
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("Unsupported file format: %s"), *Extension);
-    }
+    FString Ext = FPaths::GetExtension(Path).ToLower();
+    if (Ext == TEXT("pdb")) ParsePDB(CurrentPDBContent);
+    else if (Ext == TEXT("cif")) ParseMMCIF(CurrentPDBContent);
+    else UE_LOG(LogTemp, Error, TEXT("Unsupported format: %s"), *Ext);
 }
 
-bool APDBViewer::ShowFileDialog(bool bSave, FString& OutFilePath)
+bool APDBViewer::ShowFileDialog(bool bSave, FString& Out)
 {
-    IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
-    if (!DesktopPlatform)
-    {
-        UE_LOG(LogTemp, Error, TEXT("Desktop Platform not available"));
-        return false;
-    }
+    auto* DP = FDesktopPlatformModule::Get();
+    if (!DP) return false;
 
-    TSharedPtr<SWindow> ParentWindow;
+    void* Handle = nullptr;
     if (FModuleManager::Get().IsModuleLoaded("MainFrame"))
-    {
-        IMainFrameModule& MainFrame = FModuleManager::LoadModuleChecked<IMainFrameModule>("MainFrame");
-        ParentWindow = MainFrame.GetParentWindow();
-    }
+        if (auto P = FModuleManager::LoadModuleChecked<IMainFrameModule>("MainFrame").GetParentWindow())
+            if (P.IsValid() && P->GetNativeWindow().IsValid())
+                Handle = P->GetNativeWindow()->GetOSWindowHandle();
 
-    void* ParentWindowHandle = (ParentWindow.IsValid() && ParentWindow->GetNativeWindow().IsValid())
-        ? ParentWindow->GetNativeWindow()->GetOSWindowHandle()
-        : nullptr;
+    TArray<FString> Files;
+    bool bOK = bSave ?
+        DP->SaveFileDialog(Handle, TEXT("Save PDB"), FPaths::ProjectSavedDir(), TEXT("structure.pdb"),
+            TEXT("PDB Files (*.pdb)|*.pdb|mmCIF Files (*.cif)|*.cif"), EFileDialogFlags::None, Files) :
+        DP->OpenFileDialog(Handle, TEXT("Load PDB"), FPaths::ProjectSavedDir(), TEXT(""),
+            TEXT("PDB Files (*.pdb)|*.pdb|mmCIF Files (*.cif)|*.cif"), EFileDialogFlags::None, Files);
 
-    TArray<FString> OutFiles;
-    const FString FileTypes = TEXT("PDB Files (*.pdb)|*.pdb|mmCIF Files (*.cif)|*.cif|All Files (*.*)|*.*");
-    const FString DefaultPath = FPaths::ProjectSavedDir();
-
-    bool bSuccess = false;
-    if (bSave)
-    {
-        bSuccess = DesktopPlatform->SaveFileDialog(
-            ParentWindowHandle,
-            TEXT("Save PDB Structure"),
-            DefaultPath,
-            TEXT("structure.pdb"),
-            FileTypes,
-            EFileDialogFlags::None,
-            OutFiles);
-    }
-    else
-    {
-        bSuccess = DesktopPlatform->OpenFileDialog(
-            ParentWindowHandle,
-            TEXT("Load PDB Structure"),
-            DefaultPath,
-            TEXT(""),
-            FileTypes,
-            EFileDialogFlags::None,
-            OutFiles);
-    }
-
-    if (bSuccess && OutFiles.Num() > 0)
-    {
-        OutFilePath = OutFiles[0];
-        return true;
-    }
-
+    if (bOK && Files.Num() > 0) { Out = MoveTemp(Files[0]); return true; }
     return false;
 }
 
-void APDBViewer::OpenSaveDialog()
-{
-    FString FilePath;
-    if (ShowFileDialog(true, FilePath))
-    {
-        SaveStructureToFile(FilePath);
-    }
-}
-
-void APDBViewer::OpenLoadDialog()
-{
-    FString FilePath;
-    if (ShowFileDialog(false, FilePath))
-    {
-        LoadStructureFromFile(FilePath);
-    }
-}
+void APDBViewer::OpenSaveDialog() { FString P; if (ShowFileDialog(true, P)) SaveStructureToFile(P); }
+void APDBViewer::OpenLoadDialog() { FString P; if (ShowFileDialog(false, P)) LoadStructureFromFile(P); }
