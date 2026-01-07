@@ -1,4 +1,4 @@
-// PDBViewer.cpp — UE 5.6 compatible version
+// PDBViewer.cpp – UE 5.6 compatible version with TreeView support
 
 #include "PDBViewer.h"
 #include "PDBCameraComponent.h"
@@ -16,6 +16,7 @@
 #include "IDesktopPlatform.h"
 #include "DesktopPlatformModule.h"
 #include "Interfaces/IMainFrameModule.h"
+#include "Components/TreeView.h"
 
 namespace PDB
 {
@@ -74,21 +75,23 @@ void APDBViewer::ParsePDB(const FString& Content)
 {
     CurrentPDBContent = Content;
     ClearResidueMap();
+    ChainIDs.Empty();
 
     TArray<FString> Lines;
     Content.ParseIntoArrayLines(Lines);
 
     TMap<FString, TMap<FString, FVector>> ResAtoms;
     TMap<FString, FResidueMetadata> ResMeta;
-    FString FirstChain;
 
     for (const auto& L : Lines)
     {
-        if (L.Len() < 80 || !L.StartsWith(TEXT("HETATM"))) continue;
+        FString RecordType = L.Mid(0, 6);
+        if (L.Len() < 80  || ! (RecordType.StartsWith("ATOM") || RecordType.StartsWith("HETATM")) ) continue;
 
-        FString Chain = L.Mid(21, 1);
-        if (FirstChain.IsEmpty()) FirstChain = Chain;
-        else if (Chain != FirstChain) continue;
+        FString Chain = L.Mid(21, 1).TrimStartAndEnd();
+        if (Chain.IsEmpty()) Chain = TEXT("_"); // Handle empty chain IDs
+        
+        ChainIDs.Add(Chain);
 
         FString Key = FString::Printf(TEXT("%s_%s_%s"),
             *L.Mid(17, 3).TrimStartAndEnd(),
@@ -106,7 +109,7 @@ void APDBViewer::ParsePDB(const FString& Content)
             M.ResidueName = L.Mid(17, 3).TrimStartAndEnd();
             M.ResidueSeq = L.Mid(22, 4).TrimStartAndEnd();
             M.Chain = Chain;
-            M.RecordType = TEXT("HETATM");
+            M.RecordType = RecordType;
         }
     }
 
@@ -118,6 +121,7 @@ void APDBViewer::ParseMMCIF(const FString& Content)
 {
     CurrentPDBContent = Content;
     ClearResidueMap();
+    ChainIDs.Empty();
 
     TArray<FString> Lines;
     Content.ParseIntoArrayLines(Lines);
@@ -153,16 +157,16 @@ void APDBViewer::ParseMMCIF(const FString& Content)
 
     TMap<FString, TMap<FString, FVector>> ResAtoms;
     TMap<FString, FResidueMetadata> ResMeta;
-    FString FirstChain;
 
     for (const auto& R : AtomTab)
     {
         if (XI < 0 || YI < 0 || ZI < 0 || RI < 0 || AI < 0) continue;
         if (GI >= 0 && R.IsValidIndex(GI) && R[GI] != TEXT("ATOM")) continue;
 
-        FString Chain = (CI >= 0 && R.IsValidIndex(CI)) ? R[CI] : TEXT("");
-        if (FirstChain.IsEmpty()) FirstChain = Chain;
-        else if (Chain != FirstChain) continue;
+        FString Chain = (CI >= 0 && R.IsValidIndex(CI)) ? R[CI] : TEXT("_");
+        if (Chain.IsEmpty()) Chain = TEXT("_");
+        
+        ChainIDs.Add(Chain);
 
         FString Seq = (SI >= 0 && R.IsValidIndex(SI)) ? R[SI] : TEXT("0");
         FString Key = FString::Printf(TEXT("%s_%s_%s"), *R[RI], *Seq, *Chain);
@@ -367,6 +371,7 @@ void APDBViewer::ClearResidueMap()
 {
     for (auto& P : ResidueMap) delete P.Value;
     ResidueMap.Empty();
+    ChainIDs.Empty();
 }
 
 void APDBViewer::ClearCurrentStructure()
@@ -387,6 +392,154 @@ void APDBViewer::ToggleResidueVisibility(const FString& Key)
     for (auto* M : Info->AtomMeshes) if (M) M->SetVisibility(Info->bIsVisible);
     for (auto* M : Info->BondMeshes) if (M) M->SetVisibility(Info->bIsVisible);
 }
+
+// New TreeView Functions
+
+TArray<UPDBTreeNode*> APDBViewer::GetChainNodes()
+{
+    TArray<UPDBTreeNode*> Nodes;
+    TArray<FString> SortedChains = ChainIDs.Array();
+    SortedChains.Sort();
+    
+    for (const FString& ChainID : SortedChains)
+    {
+        FString DisplayName = ChainID == TEXT("_") 
+            ? TEXT("Chain (No ID)") 
+            : FString::Printf(TEXT("Chain %s"), *ChainID);
+        
+        UPDBTreeNode* Node = NewObject<UPDBTreeNode>(this);
+        Node->Initialize(DisplayName, ChainID, true, ChainID);
+        Nodes.Add(Node);
+    }
+    
+    return Nodes;
+}
+
+TArray<UPDBTreeNode*> APDBViewer::GetResidueNodesForChain(const FString& ChainID)
+{
+    TArray<UPDBTreeNode*> Nodes;
+    TArray<FString> Keys;
+    ResidueMap.GetKeys(Keys);
+    
+    // Sort by residue sequence number
+    Keys.Sort([](const FString& A, const FString& B) {
+        int32 U1, U2;
+        if (!A.FindChar('_', U1) || !B.FindChar('_', U2))
+            return A < B;
+
+        int32 U3 = A.Find(TEXT("_"), ESearchCase::IgnoreCase, ESearchDir::FromStart, U1 + 1);
+        int32 U4 = B.Find(TEXT("_"), ESearchCase::IgnoreCase, ESearchDir::FromStart, U2 + 1);
+
+        if (U3 != INDEX_NONE && U4 != INDEX_NONE)
+        {
+            int32 NumA = FCString::Atoi(*A.Mid(U1 + 1, U3 - U1 - 1));
+            int32 NumB = FCString::Atoi(*B.Mid(U2 + 1, U4 - U2 - 1));
+            return NumA < NumB;
+        }
+        return A < B;
+    });
+    
+    for (const FString& Key : Keys)
+    {
+        const auto* InfoPtr = ResidueMap.Find(Key);
+        if (!InfoPtr || !*InfoPtr) continue;
+        
+        const FResidueInfo* Info = *InfoPtr;
+        if (Info->Chain != ChainID) continue;
+        
+        FString DisplayName = FString::Printf(TEXT("%s %s"), *Info->ResidueName, *Info->ResidueSeq);
+        
+        UPDBTreeNode* Node = NewObject<UPDBTreeNode>(this);
+        Node->Initialize(DisplayName, Key, false, ChainID);
+        Node->bIsVisible = Info->bIsVisible;
+        
+        Nodes.Add(Node);
+    }
+    
+    return Nodes;
+}
+
+void APDBViewer::ToggleChainVisibility(const FString& ChainID)
+{
+    bool bNewVisibility = false;
+    bool bFirstResidue = true;
+    
+    // Determine new visibility state based on first residue in chain
+    for (const auto& Pair : ResidueMap)
+    {
+        if (Pair.Value && Pair.Value->Chain == ChainID)
+        {
+            if (bFirstResidue)
+            {
+                bNewVisibility = !Pair.Value->bIsVisible;
+                bFirstResidue = false;
+            }
+            
+            Pair.Value->bIsVisible = bNewVisibility;
+            for (auto* M : Pair.Value->AtomMeshes) if (M) M->SetVisibility(bNewVisibility);
+            for (auto* M : Pair.Value->BondMeshes) if (M) M->SetVisibility(bNewVisibility);
+        }
+    }
+}
+
+void APDBViewer::ToggleNodeVisibility(UPDBTreeNode* Node)
+{
+    if (!Node) return;
+    
+    if (Node->bIsChain)
+    {
+        ToggleChainVisibility(Node->ChainID);
+    }
+    else
+    {
+        ToggleResidueVisibility(Node->NodeKey);
+    }
+}
+
+void APDBViewer::PopulateTreeView(UTreeView* TreeView)
+{
+    if (!TreeView) return;
+    
+    // Clear existing items
+    TreeView->ClearListItems();
+    
+    // Get all chain nodes
+    TArray<UPDBTreeNode*> ChainNodes = GetChainNodes();
+    
+    // Add each chain to the tree view
+    for (UPDBTreeNode* ChainNode : ChainNodes)
+    {
+        TreeView->AddItem(ChainNode);
+    }
+    
+    // Request refresh
+    TreeView->RequestRefresh();
+}
+
+TArray<UObject*> APDBViewer::GetChildrenForNode(UPDBTreeNode* Node)
+{
+    TArray<UObject*> ChildNodes;
+    
+    if (!Node)
+        return ChildNodes;
+    
+    if (Node->bIsChain)
+    {
+        // Get residues for this chain
+        TArray<UPDBTreeNode*> Residues = GetResidueNodesForChain(Node->ChainID);
+        
+        // Convert to UObject array
+        for (UPDBTreeNode* Residue : Residues)
+        {
+            ChildNodes.Add(Residue);
+        }
+    }
+    // else: residues have no children, return empty array
+    
+    return ChildNodes;
+}
+
+// Legacy Functions (kept for backwards compatibility)
 
 TArray<FString> APDBViewer::GetResidueList() const
 {
@@ -420,6 +573,8 @@ FString APDBViewer::GetResidueDisplayName(const FString& Key) const
         ? FString::Printf(TEXT("%s %s"), *(*P)->ResidueName, *(*P)->ResidueSeq)
         : Key;
 }
+
+// File I/O Functions
 
 void APDBViewer::SaveStructureToFile(const FString& Path)
 {
