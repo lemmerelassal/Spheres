@@ -101,6 +101,7 @@ protected:
     void FetchFileAsync(const FString& URL, TFunction<void(bool, const FString&)> Callback);
     void ParsePDB(const FString& FileContent);
     void ParseMMCIF(const FString& FileContent);
+    void ParseSDF(const FString& FileContent);
     void CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FVector>>& ResidueAtoms, const TMap<FString, FResidueMetadata>& Metadata);
     void FetchLigandBondsForResidue(const FString& ResidueKey, const FString& ResidueName, const TMap<FString, FVector>& AtomPositions);
     void ParseLigandCIFForResidue(const FString& FileContent, const TMap<FString, FVector>& AtomPositions, FResidueInfo* ResInfo);

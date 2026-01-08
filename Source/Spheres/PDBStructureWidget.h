@@ -6,6 +6,7 @@
 #include "PDBStructureWidget.generated.h"
 
 class UTreeView;
+class UButton;
 class APDBViewer;
 class UPDBTreeNode;
 
@@ -21,6 +22,16 @@ public:
     // Bind this to your TreeView in the Designer
     UPROPERTY(BlueprintReadWrite, meta = (BindWidget))
     UTreeView* StructureTreeView;
+    
+    // Bind buttons (optional - use BindWidgetOptional if they might not exist)
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    UButton* Button_Load;
+    
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    UButton* Button_Save;
+    
+    UPROPERTY(BlueprintReadWrite, meta = (BindWidgetOptional))
+    UButton* Button_Clear;
 
 protected:
     UPROPERTY()
@@ -32,4 +43,20 @@ protected:
 
     // TreeView delegate for getting children - must match UE signature
     void OnGetItemChildren(UObject* Item, TArray<UObject*>& OutChildren);
+    
+    // Auto-apply text styles
+    void ApplyTextStyles();
+    
+    // Auto-apply button styles
+    void ApplyButtonStyles();
+    
+    // Button click handlers
+    UFUNCTION()
+    void OnLoadClicked();
+    
+    UFUNCTION()
+    void OnSaveClicked();
+    
+    UFUNCTION()
+    void OnClearClicked();
 };

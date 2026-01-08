@@ -1,4 +1,4 @@
-// PDBViewer.cpp – UE 5.6 compatible version with TreeView support
+// PDBViewer.cpp – UE 5.6 compatible version with TreeView and SDF support
 
 #include "PDBViewer.h"
 #include "PDBCameraComponent.h"
@@ -188,6 +188,198 @@ void APDBViewer::ParseMMCIF(const FString& Content)
 
     CreateResiduesFromAtomData(ResAtoms, ResMeta);
     OnResiduesLoaded.Broadcast();
+}
+
+void APDBViewer::ParseSDF(const FString& Content)
+{
+    CurrentPDBContent = Content;
+    ClearResidueMap();
+    ChainIDs.Empty();
+
+    TArray<FString> Lines;
+    Content.ParseIntoArrayLines(Lines);
+
+    int32 MoleculeIndex = 0;
+    int32 LineIndex = 0;
+    
+    while (LineIndex < Lines.Num())
+    {
+        // Check if we have enough lines for a molecule header
+        if (LineIndex + 3 >= Lines.Num())
+            break;
+
+        FString MoleculeName = Lines[LineIndex].TrimStartAndEnd();
+        if (MoleculeName.IsEmpty())
+            MoleculeName = FString::Printf(TEXT("MOL%d"), MoleculeIndex + 1);
+        
+        // Find the counts line - it's the line with the V2000 or V3000 marker
+        // Usually at LineIndex + 3, but let's search for it
+        int32 CountsLineIndex = -1;
+        for (int32 i = LineIndex + 1; i < FMath::Min(LineIndex + 5, Lines.Num()); ++i)
+        {
+            if (Lines[i].Contains(TEXT("V2000")) || Lines[i].Contains(TEXT("V3000")))
+            {
+                CountsLineIndex = i;
+                break;
+            }
+        }
+        
+        if (CountsLineIndex == -1)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Could not find counts line for molecule '%s'"), *MoleculeName);
+            LineIndex++;
+            continue;
+        }
+        
+        FString CountsLine = Lines[CountsLineIndex];
+        
+        UE_LOG(LogTemp, Log, TEXT("SDF molecule '%s' at line %d"), *MoleculeName, LineIndex);
+        UE_LOG(LogTemp, Log, TEXT("  Counts line (index %d): '%s' (len=%d)"), CountsLineIndex, *CountsLine, CountsLine.Len());
+        
+        if (CountsLine.Len() < 6)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Invalid counts line, skipping molecule"));
+            LineIndex++;
+            continue;
+        }
+
+        int32 NumAtoms = FCString::Atoi(*CountsLine.Mid(0, 3).TrimStartAndEnd());
+        int32 NumBonds = FCString::Atoi(*CountsLine.Mid(3, 3).TrimStartAndEnd());
+
+        UE_LOG(LogTemp, Log, TEXT("  Expecting %d atoms, %d bonds"), NumAtoms, NumBonds);
+
+        // Parse atom block (starts right after counts line)
+        TArray<FVector> AtomPositions;
+        TArray<FString> AtomElements;
+        int32 AtomStartLine = CountsLineIndex + 1;
+        
+        UE_LOG(LogTemp, Log, TEXT("  AtomStartLine=%d, Lines.Num()=%d"), AtomStartLine, Lines.Num());
+        
+        for (int32 i = 0; i < NumAtoms; ++i)
+        {
+            int32 CurrentLine = AtomStartLine + i;
+            if (CurrentLine >= Lines.Num())
+            {
+                UE_LOG(LogTemp, Warning, TEXT("  Ran out of lines at atom %d (line %d >= %d)"), i, CurrentLine, Lines.Num());
+                break;
+            }
+            
+            FString Line = Lines[CurrentLine];
+            if (Line.Len() < 34) 
+            {
+                UE_LOG(LogTemp, Warning, TEXT("  Atom line %d too short: '%s' (len=%d)"), i, *Line, Line.Len());
+                continue;
+            }
+
+            // Parse coordinates
+            float X = FCString::Atof(*Line.Mid(0, 10).TrimStartAndEnd());
+            float Y = FCString::Atof(*Line.Mid(10, 10).TrimStartAndEnd());
+            float Z = FCString::Atof(*Line.Mid(20, 10).TrimStartAndEnd());
+            
+            // Parse element symbol (starts at position 31)
+            FString Element = Line.Mid(31, 3).TrimStartAndEnd();
+            
+            // Handle 1 or 2 character elements
+            if (Element.Len() > 1 && FChar::IsLower(Element[1]))
+                Element = Element.Left(2); // e.g., "Cl", "Br"
+            else
+                Element = Element.Left(1); // e.g., "C", "N", "O"
+
+            FVector Pos(X, Y, Z);
+            Pos *= PDB::SCALE;
+            
+            AtomPositions.Add(Pos);
+            AtomElements.Add(Element);
+            
+            if (i == 0)
+            {
+                UE_LOG(LogTemp, Log, TEXT("  First atom: Element='%s' Pos=(%f,%f,%f) Scaled=(%f,%f,%f)"), 
+                       *Element, X, Y, Z, Pos.X, Pos.Y, Pos.Z);
+            }
+        }
+        
+        UE_LOG(LogTemp, Log, TEXT("  Parsed %d atoms (expected %d)"), AtomPositions.Num(), NumAtoms);
+
+        // Parse bond block (starts after atom block)
+        int32 BondStartLine = AtomStartLine + NumAtoms;
+        TArray<TPair<int32, int32>> BondPairs;
+        TArray<int32> BondOrders;
+
+        for (int32 i = 0; i < NumBonds && (BondStartLine + i) < Lines.Num(); ++i)
+        {
+            FString Line = Lines[BondStartLine + i];
+            if (Line.Len() < 9) continue;
+
+            // Parse bond line
+            int32 Atom1 = FCString::Atoi(*Line.Mid(0, 3).TrimStartAndEnd()) - 1; // Convert to 0-indexed
+            int32 Atom2 = FCString::Atoi(*Line.Mid(3, 3).TrimStartAndEnd()) - 1;
+            int32 BondType = FCString::Atoi(*Line.Mid(6, 3).TrimStartAndEnd());
+
+            if (Atom1 >= 0 && Atom1 < AtomPositions.Num() && 
+                Atom2 >= 0 && Atom2 < AtomPositions.Num())
+            {
+                BondPairs.Add(TPair<int32, int32>(Atom1, Atom2));
+                BondOrders.Add(BondType);
+            }
+        }
+
+        // Create residue for this molecule
+        FString ChainID = TEXT("A");
+        FString Key = FString::Printf(TEXT("%s_%d_%s"), *MoleculeName, MoleculeIndex + 1, *ChainID);
+        
+        auto* Info = new FResidueInfo();
+        Info->ResidueName = MoleculeName;
+        Info->ResidueSeq = FString::FromInt(MoleculeIndex + 1);
+        Info->Chain = ChainID;
+        Info->RecordType = TEXT("HETATM");
+        Info->bIsVisible = true;
+
+        // Draw all atoms
+        for (int32 i = 0; i < AtomPositions.Num(); ++i)
+        {
+            FLinearColor Color = GetElementColor(AtomElements[i]);
+            DrawSphere(AtomPositions[i].X, AtomPositions[i].Y, AtomPositions[i].Z, 
+                       Color, GetRootComponent(), Info->AtomMeshes);
+        }
+
+        // Draw all bonds
+        for (int32 i = 0; i < BondPairs.Num(); ++i)
+        {
+            int32 Atom1 = BondPairs[i].Key;
+            int32 Atom2 = BondPairs[i].Value;
+            int32 Order = BondOrders[i];
+
+            // Treat aromatic bonds as single bonds for visualization
+            if (Order == 4) Order = 1;
+            
+            DrawBond(AtomPositions[Atom1], AtomPositions[Atom2], Order, 
+                     FLinearColor::Gray, GetRootComponent(), Info->BondMeshes);
+        }
+
+        UE_LOG(LogTemp, Log, TEXT("  Created %d atom meshes, %d bond meshes for '%s'"), 
+               Info->AtomMeshes.Num(), Info->BondMeshes.Num(), *Key);
+
+        ResidueMap.Add(Key, Info);
+        ChainIDs.Add(ChainID);
+        
+        // Find the next molecule separator ($$$$) or end of file
+        LineIndex = BondStartLine + NumBonds;
+        while (LineIndex < Lines.Num())
+        {
+            if (Lines[LineIndex].StartsWith(TEXT("$$")))
+            {
+                LineIndex++; // Skip the $$$$ line
+                break;
+            }
+            LineIndex++;
+        }
+        
+        MoleculeIndex++;
+    }
+    
+    OnResiduesLoaded.Broadcast();
+    
+    UE_LOG(LogTemp, Log, TEXT("SDF loaded successfully: %d molecules"), MoleculeIndex);
 }
 
 void APDBViewer::CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FVector>>& ResAtoms, const TMap<FString, FResidueMetadata>& Meta)
@@ -608,9 +800,14 @@ void APDBViewer::LoadStructureFromFile(const FString& Path)
     CurrentPDBContent = MoveTemp(Content);
 
     FString Ext = FPaths::GetExtension(Path).ToLower();
-    if (Ext == TEXT("pdb")) ParsePDB(CurrentPDBContent);
-    else if (Ext == TEXT("cif")) ParseMMCIF(CurrentPDBContent);
-    else UE_LOG(LogTemp, Error, TEXT("Unsupported format: %s"), *Ext);
+    if (Ext == TEXT("pdb")) 
+        ParsePDB(CurrentPDBContent);
+    else if (Ext == TEXT("cif")) 
+        ParseMMCIF(CurrentPDBContent);
+    else if (Ext == TEXT("sdf") || Ext == TEXT("mol"))
+        ParseSDF(CurrentPDBContent);
+    else 
+        UE_LOG(LogTemp, Error, TEXT("Unsupported format: %s"), *Ext);
 }
 
 bool APDBViewer::ShowFileDialog(bool bSave, FString& Out)
@@ -625,11 +822,20 @@ bool APDBViewer::ShowFileDialog(bool bSave, FString& Out)
                 Handle = P->GetNativeWindow()->GetOSWindowHandle();
 
     TArray<FString> Files;
+    FString FileTypes = TEXT("All Supported (*.pdb;*.cif;*.sdf;*.mol)|*.pdb;*.cif;*.sdf;*.mol|")
+                        TEXT("PDB Files (*.pdb)|*.pdb|")
+                        TEXT("mmCIF Files (*.cif)|*.cif|")
+                        TEXT("SDF Files (*.sdf)|*.sdf|")
+                        TEXT("MOL Files (*.mol)|*.mol");
+    
+    FString DefaultFile = bSave ? TEXT("structure.pdb") : TEXT("");
+    FString DialogTitle = bSave ? TEXT("Save Structure") : TEXT("Load Structure");
+    
     bool bOK = bSave ?
-        DP->SaveFileDialog(Handle, TEXT("Save PDB"), FPaths::ProjectSavedDir(), TEXT("structure.pdb"),
-            TEXT("PDB Files (*.pdb)|*.pdb|mmCIF Files (*.cif)|*.cif"), EFileDialogFlags::None, Files) :
-        DP->OpenFileDialog(Handle, TEXT("Load PDB"), FPaths::ProjectSavedDir(), TEXT(""),
-            TEXT("PDB Files (*.pdb)|*.pdb|mmCIF Files (*.cif)|*.cif"), EFileDialogFlags::None, Files);
+        DP->SaveFileDialog(Handle, DialogTitle, FPaths::ProjectSavedDir(), DefaultFile,
+            FileTypes, EFileDialogFlags::None, Files) :
+        DP->OpenFileDialog(Handle, DialogTitle, FPaths::ProjectSavedDir(), TEXT(""),
+            FileTypes, EFileDialogFlags::None, Files);
 
     if (bOK && Files.Num() > 0) { Out = MoveTemp(Files[0]); return true; }
     return false;
