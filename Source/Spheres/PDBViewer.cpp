@@ -17,6 +17,7 @@
 #include "DesktopPlatformModule.h"
 #include "Interfaces/IMainFrameModule.h"
 #include "Components/TreeView.h"
+#include "Components/ListView.h"
 
 namespace PDB
 {
@@ -193,8 +194,7 @@ void APDBViewer::ParseMMCIF(const FString& Content)
 void APDBViewer::ParseSDF(const FString& Content)
 {
     CurrentPDBContent = Content;
-    ClearResidueMap();
-    ChainIDs.Empty();
+    ClearLigandMap();
 
     TArray<FString> Lines;
     Content.ParseIntoArrayLines(Lines);
@@ -278,13 +278,6 @@ void APDBViewer::ParseSDF(const FString& Content)
             
             // Parse element symbol (starts at position 31)
             FString Element = Line.Mid(31, 3).TrimStartAndEnd();
-            
-            // Handle 1 or 2 character elements
-            if (Element.Len() > 1 && FChar::IsLower(Element[1]))
-                Element = Element.Left(2); // e.g., "Cl", "Br"
-            else
-                Element = Element.Left(1); // e.g., "C", "N", "O"
-
             FVector Pos(X, Y, Z);
             Pos *= PDB::SCALE;
             
@@ -324,14 +317,10 @@ void APDBViewer::ParseSDF(const FString& Content)
         }
 
         // Create residue for this molecule
-        FString ChainID = TEXT("A");
-        FString Key = FString::Printf(TEXT("%s_%d_%s"), *MoleculeName, MoleculeIndex + 1, *ChainID);
+        FString Key = FString::Printf(TEXT("%s"), *MoleculeName);
         
-        auto* Info = new FResidueInfo();
-        Info->ResidueName = MoleculeName;
-        Info->ResidueSeq = FString::FromInt(MoleculeIndex + 1);
-        Info->Chain = ChainID;
-        Info->RecordType = TEXT("HETATM");
+        auto* Info = new FLigandInfo();
+        Info->LigandName = MoleculeName;
         Info->bIsVisible = true;
 
         // Draw all atoms
@@ -359,8 +348,7 @@ void APDBViewer::ParseSDF(const FString& Content)
         UE_LOG(LogTemp, Log, TEXT("  Created %d atom meshes, %d bond meshes for '%s'"), 
                Info->AtomMeshes.Num(), Info->BondMeshes.Num(), *Key);
 
-        ResidueMap.Add(Key, Info);
-        ChainIDs.Add(ChainID);
+        LigandMap.Add(Key, Info);
         
         // Find the next molecule separator ($$$$) or end of file
         LineIndex = BondStartLine + NumBonds;
@@ -377,7 +365,7 @@ void APDBViewer::ParseSDF(const FString& Content)
         MoleculeIndex++;
     }
     
-    OnResiduesLoaded.Broadcast();
+    OnLigandsLoaded.Broadcast();
     
     UE_LOG(LogTemp, Log, TEXT("SDF loaded successfully: %d molecules"), MoleculeIndex);
 }
@@ -564,6 +552,11 @@ void APDBViewer::ClearResidueMap()
     for (auto& P : ResidueMap) delete P.Value;
     ResidueMap.Empty();
     ChainIDs.Empty();
+}
+
+void APDBViewer::ClearLigandMap() {
+    for (auto& P : LigandMap) delete P.Value;
+    LigandMap.Empty();
 }
 
 void APDBViewer::ClearCurrentStructure()
@@ -766,6 +759,15 @@ FString APDBViewer::GetResidueDisplayName(const FString& Key) const
         : Key;
 }
 
+
+FString APDBViewer::GetLigandDisplayName(const FString& Key) const
+{
+    const auto* P = LigandMap.Find(Key);
+    return (P && *P)
+        ? FString::Printf(TEXT("%s"), *(*P)->LigandName)
+        : Key;
+}
+
 // File I/O Functions
 
 void APDBViewer::SaveStructureToFile(const FString& Path)
@@ -843,3 +845,85 @@ bool APDBViewer::ShowFileDialog(bool bSave, FString& Out)
 
 void APDBViewer::OpenSaveDialog() { FString P; if (ShowFileDialog(true, P)) SaveStructureToFile(P); }
 void APDBViewer::OpenLoadDialog() { FString P; if (ShowFileDialog(false, P)) LoadStructureFromFile(P); }
+
+// ListView Functions for SDF Molecules
+
+TArray<UPDBMoleculeNode*> APDBViewer::GetMoleculeNodes()
+{
+    TArray<UPDBMoleculeNode*> Nodes;
+    TArray<FString> Keys;
+    LigandMap.GetKeys(Keys);
+    
+    // Sort by molecule name
+    Keys.Sort();
+    
+    for (const FString& Key : Keys)
+    {
+        const auto* InfoPtr = LigandMap.Find(Key);
+        if (!InfoPtr || !*InfoPtr) continue;
+        
+        const FLigandInfo* Info = *InfoPtr;
+        
+        UPDBMoleculeNode* Node = NewObject<UPDBMoleculeNode>(this);
+        Node->Initialize(
+            Info->LigandName,
+            Key,
+            Info->bIsVisible,
+            Info->AtomMeshes.Num(),
+            Info->BondMeshes.Num()
+        );
+        
+        Nodes.Add(Node);
+    }
+    
+    return Nodes;
+}
+
+void APDBViewer::PopulateMoleculeListView(UListView* ListView)
+{
+    if (!ListView) return;
+    
+    // Clear existing items
+    ListView->ClearListItems();
+    
+    // Get all molecule nodes
+    TArray<UPDBMoleculeNode*> MoleculeNodes = GetMoleculeNodes();
+    
+    // Add each molecule to the list view
+    for (UPDBMoleculeNode* MoleculeNode : MoleculeNodes)
+    {
+        ListView->AddItem(MoleculeNode);
+    }
+    
+    // Request refresh
+    ListView->RegenerateAllEntries();
+}
+
+void APDBViewer::ToggleMoleculeVisibility(const FString& MoleculeKey)
+{
+    auto** InfoPtr = LigandMap.Find(MoleculeKey);
+    if (!InfoPtr || !*InfoPtr) return;
+    
+    auto* Info = *InfoPtr;
+    Info->bIsVisible = !Info->bIsVisible;
+    
+    for (auto* M : Info->AtomMeshes) 
+        if (M) M->SetVisibility(Info->bIsVisible);
+    
+    for (auto* M : Info->BondMeshes) 
+        if (M) M->SetVisibility(Info->bIsVisible);
+}
+
+void APDBViewer::ToggleMoleculeNodeVisibility(UPDBMoleculeNode* Node)
+{
+    if (!Node) return;
+    
+    ToggleMoleculeVisibility(Node->MoleculeKey);
+    
+    // Update the node's visibility state
+    auto** InfoPtr = LigandMap.Find(Node->MoleculeKey);
+    if (InfoPtr && *InfoPtr)
+    {
+        Node->bIsVisible = (*InfoPtr)->bIsVisible;
+    }
+}

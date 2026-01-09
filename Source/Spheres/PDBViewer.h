@@ -13,12 +13,28 @@ struct FResidueMetadata
 };
 
 USTRUCT()
+struct FLigandMetadata {
+    GENERATED_BODY()
+    FString LigandName;
+};
+
+USTRUCT()
 struct FResidueInfo
 {
     GENERATED_BODY()
     FString RecordType, Chain, ResidueName, ResidueSeq;
     TArray<UStaticMeshComponent*> AtomMeshes, BondMeshes;
     bool bIsVisible = true;
+};
+
+
+USTRUCT()
+struct FLigandInfo
+{
+    GENERATED_BODY()
+    FString LigandName;
+    TArray<UStaticMeshComponent*> AtomMeshes, BondMeshes;
+    bool bIsVisible = false;
 };
 
 // TreeView Node Object (must be UObject for TreeView)
@@ -53,6 +69,38 @@ public:
     }
 };
 
+// ListView Node Object for SDF Molecules
+UCLASS(BlueprintType)
+class SPHERES_API UPDBMoleculeNode : public UObject
+{
+    GENERATED_BODY()
+    
+public:
+    UPROPERTY(BlueprintReadOnly, Category = "PDB Viewer")
+    FString MoleculeName;
+    
+    UPROPERTY(BlueprintReadOnly, Category = "PDB Viewer")
+    FString MoleculeKey;
+    
+    UPROPERTY(BlueprintReadOnly, Category = "PDB Viewer")
+    bool bIsVisible = true;
+    
+    UPROPERTY(BlueprintReadOnly, Category = "PDB Viewer")
+    int32 AtomCount = 0;
+    
+    UPROPERTY(BlueprintReadOnly, Category = "PDB Viewer")
+    int32 BondCount = 0;
+    
+    void Initialize(const FString& InName, const FString& InKey, bool bInIsVisible, int32 InAtomCount, int32 InBondCount)
+    {
+        MoleculeName = InName;
+        MoleculeKey = InKey;
+        bIsVisible = bInIsVisible;
+        AtomCount = InAtomCount;
+        BondCount = InBondCount;
+    }
+};
+
 UCLASS()
 class SPHERES_API APDBViewer : public AActor
 {
@@ -63,6 +111,8 @@ public:
     
     DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnResiduesLoaded);
     UPROPERTY(BlueprintAssignable, Category = "PDB Viewer") FOnResiduesLoaded OnResiduesLoaded;
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnLigandsLoaded);
+    UPROPERTY(BlueprintAssignable, Category = "PDB Viewer") FOnLigandsLoaded OnLigandsLoaded;
     
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void SaveStructureToFile(const FString& FilePath);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void LoadStructureFromFile(const FString& FilePath);
@@ -79,10 +129,18 @@ public:
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void PopulateTreeView(class UTreeView* TreeView);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<UObject*> GetChildrenForNode(UPDBTreeNode* Node);
     
+    // ListView functions for SDF molecules
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<UPDBMoleculeNode*> GetMoleculeNodes();
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void PopulateMoleculeListView(class UListView* ListView);
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleMoleculeVisibility(const FString& MoleculeKey);
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleMoleculeNodeVisibility(UPDBMoleculeNode* Node);
+    
     // Legacy functions (kept for backwards compatibility)
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<FString> GetResidueList() const;
-    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") FString GetResidueDisplayName(const FString& ResidueKey) const;
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<FString> GetLigandList() const;
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") FString GetResidueDisplayName(const FString& ResidueKey) const;
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") FString GetLigandDisplayName(const FString& LigandKey) const;
+
 
 protected:
     virtual void BeginPlay() override;
@@ -95,6 +153,8 @@ protected:
     
     FString CurrentPDBContent, CurrentStructureID;
     TMap<FString, FResidueInfo*> ResidueMap;
+    TMap<FString, FLigandInfo*> LigandMap;
+
     TSet<FString> ChainIDs; // Track all chains in the structure
     
     void FetchAndDisplayStructure(const FString& PDB_ID);
@@ -111,5 +171,6 @@ protected:
     void DrawBond(const FVector& Start, const FVector& End, int32 Order, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);
     FLinearColor GetElementColor(const FString& Element) const;
     void ClearResidueMap();
+    void ClearLigandMap();
     bool ShowFileDialog(bool bSave, FString& OutFilePath);
 };
