@@ -191,6 +191,8 @@ void APDBViewer::ParseMMCIF(const FString& Content)
     OnResiduesLoaded.Broadcast();
 }
 
+// Replace the ParseSDF function in PDBViewer.cpp with this corrected version
+
 void APDBViewer::ParseSDF(const FString& Content)
 {
     CurrentPDBContent = Content;
@@ -316,12 +318,12 @@ void APDBViewer::ParseSDF(const FString& Content)
             }
         }
 
-        // Create residue for this molecule
+        // Create ligand info for this molecule
         FString Key = FString::Printf(TEXT("%s"), *MoleculeName);
         
         auto* Info = new FLigandInfo();
         Info->LigandName = MoleculeName;
-        Info->bIsVisible = true;
+        Info->bIsVisible = true;  // Set to visible by default
 
         // Draw all atoms
         for (int32 i = 0; i < AtomPositions.Num(); ++i)
@@ -345,8 +347,25 @@ void APDBViewer::ParseSDF(const FString& Content)
                      FLinearColor::Gray, GetRootComponent(), Info->BondMeshes);
         }
 
-        UE_LOG(LogTemp, Log, TEXT("  Created %d atom meshes, %d bond meshes for '%s'"), 
-               Info->AtomMeshes.Num(), Info->BondMeshes.Num(), *Key);
+        // IMPORTANT: Set initial visibility on all meshes
+        for (auto* Mesh : Info->AtomMeshes)
+        {
+            if (Mesh)
+            {
+                Mesh->SetVisibility(Info->bIsVisible);
+            }
+        }
+        
+        for (auto* Mesh : Info->BondMeshes)
+        {
+            if (Mesh)
+            {
+                Mesh->SetVisibility(Info->bIsVisible);
+            }
+        }
+
+        UE_LOG(LogTemp, Log, TEXT("  Created %d atom meshes, %d bond meshes for '%s' (Visible: %s)"), 
+               Info->AtomMeshes.Num(), Info->BondMeshes.Num(), *Key, Info->bIsVisible ? TEXT("true") : TEXT("false"));
 
         LigandMap.Add(Key, Info);
         
@@ -384,9 +403,9 @@ void APDBViewer::CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FV
         Info->RecordType = M->RecordType;
         Info->bIsVisible = true;
 
-        for (const auto& A : P.Value)
+/*         for (const auto& A : P.Value)
             DrawSphere(A.Value.X, A.Value.Y, A.Value.Z, GetElementColor(A.Key.Left(1)), GetRootComponent(), Info->AtomMeshes);
-
+ */
         ResidueMap.Add(P.Key, Info);
         FetchLigandBondsForResidue(P.Key, M->ResidueName, P.Value);
     }
@@ -788,6 +807,8 @@ void APDBViewer::SaveStructureToFile(const FString& Path)
     }
 }
 
+// Replace the LoadStructureFromFile function in PDBViewer.cpp with this:
+
 void APDBViewer::LoadStructureFromFile(const FString& Path)
 {
     FString Content;
@@ -797,11 +818,18 @@ void APDBViewer::LoadStructureFromFile(const FString& Path)
         return;
     }
 
-    ClearCurrentStructure();
-    CurrentStructureID = FPaths::GetBaseFilename(Path);
-    CurrentPDBContent = MoveTemp(Content);
-
     FString Ext = FPaths::GetExtension(Path).ToLower();
+    
+    // Only clear the structure if loading PDB or CIF (protein structures)
+    // SDF/MOL files are ligands and should be additive
+    if (Ext == TEXT("pdb") || Ext == TEXT("cif"))
+    {
+        ClearCurrentStructure();
+        CurrentStructureID = FPaths::GetBaseFilename(Path);
+    }
+    
+    CurrentPDBContent = Content;
+
     if (Ext == TEXT("pdb")) 
         ParsePDB(CurrentPDBContent);
     else if (Ext == TEXT("cif")) 

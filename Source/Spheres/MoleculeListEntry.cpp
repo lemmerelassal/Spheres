@@ -42,15 +42,7 @@ void UMoleculeListEntry::NativeOnListItemObjectSet(UObject* ListItemObject)
     }
 
     // Update button appearance based on visibility
-    if (ButtonToggleVisibility)
-    {
-        UTextBlock* ButtonText = Cast<UTextBlock>(ButtonToggleVisibility->GetChildAt(0));
-        if (ButtonText)
-        {
-            FString ToggleText = CurrentMoleculeNode->bIsVisible ? TEXT("Hide") : TEXT("Show");
-            ButtonText->SetText(FText::FromString(ToggleText));
-        }
-    }
+    UpdateButtonText();
 }
 
 void UMoleculeListEntry::OnToggleClicked()
@@ -65,17 +57,23 @@ void UMoleculeListEntry::OnToggleClicked()
 
     if (Viewer)
     {
+        // Toggle visibility in the viewer
         Viewer->ToggleMoleculeNodeVisibility(CurrentMoleculeNode);
 
-        // Update button text
-        if (ButtonToggleVisibility)
-        {
-            UTextBlock* ButtonText = Cast<UTextBlock>(ButtonToggleVisibility->GetChildAt(0));
-            if (ButtonText)
-            {
-                FString ToggleText = CurrentMoleculeNode->bIsVisible ? TEXT("Hide") : TEXT("Show");
-                ButtonText->SetText(FText::FromString(ToggleText));
-            }
-        }
+        // Update button text based on the NEW state after toggling
+        UpdateButtonText();
+    }
+}
+
+void UMoleculeListEntry::UpdateButtonText()
+{
+    if (!CurrentMoleculeNode || !ButtonToggleVisibility)
+        return;
+
+    UTextBlock* ButtonText = Cast<UTextBlock>(ButtonToggleVisibility->GetChildAt(0));
+    if (ButtonText)
+    {
+        FString ToggleText = CurrentMoleculeNode->bIsVisible ? TEXT("Hide") : TEXT("Show");
+        ButtonText->SetText(FText::FromString(ToggleText));
     }
 }

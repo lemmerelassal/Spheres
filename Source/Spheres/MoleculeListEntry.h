@@ -39,6 +39,8 @@ private:
     UFUNCTION()
     void OnToggleClicked();
 
+    void UpdateButtonText();
+
     UPROPERTY()
     UPDBMoleculeNode* CurrentMoleculeNode;
 };
