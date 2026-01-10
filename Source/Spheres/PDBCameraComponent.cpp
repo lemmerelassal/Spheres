@@ -5,6 +5,7 @@
 #include "Components/InputComponent.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Kismet/GameplayStatics.h"
+#include "PDBViewer.h"
 #include "Components/PrimitiveComponent.h"
 
 APDBCameraComponent::APDBCameraComponent()
@@ -183,7 +184,75 @@ void APDBCameraComponent::SetTargetActor(AActor* Target)
 
 void APDBCameraComponent::FitActorToScreen()
 {
-    // Find actor with the most primitive components (that's our molecule)
+    // First try to center on the currently visible ligand (if any)
+    TArray<AActor*> FoundViewers;
+    UGameplayStatics::GetAllActorsOfClass(GetWorld(), APDBViewer::StaticClass(), FoundViewers);
+
+    for (AActor* Actor : FoundViewers)
+    {
+        APDBViewer* Viewer = Cast<APDBViewer>(Actor);
+        if (!Viewer) continue;
+
+        FLigandInfo* BestInfo = Viewer->GetVisibleLigandInfo();
+
+        if (BestInfo && (BestInfo->AtomMeshes.Num() + BestInfo->BondMeshes.Num()) > 0)
+        {
+            // Compute bounding box from visible components of this ligand
+            FBox BoundingBox(ForceInit);
+            bool bFoundAnyBounds = false;
+
+            for (UStaticMeshComponent* Mesh : BestInfo->AtomMeshes)
+            {
+                if (Mesh && Mesh->IsVisible())
+                {
+                    FBox CompBounds = Mesh->Bounds.GetBox();
+                    if (CompBounds.IsValid)
+                    {
+                        BoundingBox += CompBounds;
+                        bFoundAnyBounds = true;
+                    }
+                }
+            }
+
+            for (UStaticMeshComponent* Mesh : BestInfo->BondMeshes)
+            {
+                if (Mesh && Mesh->IsVisible())
+                {
+                    FBox CompBounds = Mesh->Bounds.GetBox();
+                    if (CompBounds.IsValid)
+                    {
+                        BoundingBox += CompBounds;
+                        bFoundAnyBounds = true;
+                    }
+                }
+            }
+
+            if (bFoundAnyBounds)
+            {
+                FVector Center = BoundingBox.GetCenter();
+                SetActorLocation(Center);
+                UE_LOG(LogTemp, Log, TEXT("Centered on visible ligand at %s, zoom=%.1f"),
+                    *Center.ToString(), OrbitDistance);
+
+                // Reset rotation to default view
+                CurrentYaw = 0.0f;
+                CurrentPitch = -30.0f;
+                PivotPoint->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0));
+                return;
+            }
+            else if (BestInfo->AtomMeshes.Num() > 0 && BestInfo->AtomMeshes[0])
+            {
+                // Fallback to a component location if no valid bounds
+                SetActorLocation(BestInfo->AtomMeshes[0]->GetComponentLocation());
+                CurrentYaw = 0.0f;
+                CurrentPitch = -30.0f;
+                PivotPoint->SetRelativeRotation(FRotator(CurrentPitch, CurrentYaw, 0));
+                return;
+            }
+        }
+    }
+
+    // Fallback: find actor with the most primitive components (that's our molecule)
     TArray<AActor*> AllActors;
     UGameplayStatics::GetAllActorsOfClass(GetWorld(), AActor::StaticClass(), AllActors);
     

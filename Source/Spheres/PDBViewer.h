@@ -141,6 +141,8 @@ public:
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") FString GetResidueDisplayName(const FString& ResidueKey) const;
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") FString GetLigandDisplayName(const FString& LigandKey) const;
 
+    // Get the currently visible ligand (if any)
+    FLigandInfo* GetVisibleLigandInfo() const;
 
 protected:
     virtual void BeginPlay() override;
@@ -168,7 +170,7 @@ protected:
     FString NormalizeAtomID(const FString& In) const;
     int32 ParseBondOrder(const FString& OrderStr) const;
     void DrawSphere(float X, float Y, float Z, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);
-    void DrawBond(const FVector& Start, const FVector& End, int32 Order, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);
+    void DrawBond(const FVector& Start, const FVector& End, int32 Order, const FString& Element1, const FString& Element2, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);
     FLinearColor GetElementColor(const FString& Element) const;
     void ClearResidueMap();
     void ClearLigandMap();

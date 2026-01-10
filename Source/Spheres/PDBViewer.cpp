@@ -280,6 +280,15 @@ void APDBViewer::ParseSDF(const FString& Content)
             
             // Parse element symbol (starts at position 31)
             FString Element = Line.Mid(31, 3).TrimStartAndEnd();
+            // Extract just the first 1-2 characters (element symbol)
+            if (Element.Len() > 0)
+            {
+                // Take first character and optionally second if it's lowercase
+                if (Element.Len() > 1 && FChar::IsLower(Element[1]))
+                    Element = Element.Left(2);
+                else
+                    Element = Element.Left(1);
+            }
             FVector Pos(X, Y, Z);
             Pos *= PDB::SCALE;
             
@@ -323,7 +332,7 @@ void APDBViewer::ParseSDF(const FString& Content)
         
         auto* Info = new FLigandInfo();
         Info->LigandName = MoleculeName;
-        Info->bIsVisible = true;  // Set to visible by default
+        Info->bIsVisible = false;  // Set to visible by default
 
         // Draw all atoms
         for (int32 i = 0; i < AtomPositions.Num(); ++i)
@@ -344,7 +353,7 @@ void APDBViewer::ParseSDF(const FString& Content)
             if (Order == 4) Order = 1;
             
             DrawBond(AtomPositions[Atom1], AtomPositions[Atom2], Order, 
-                     FLinearColor::Gray, GetRootComponent(), Info->BondMeshes);
+                     AtomElements[Atom1], AtomElements[Atom2], GetRootComponent(), Info->BondMeshes);
         }
 
         // IMPORTANT: Set initial visibility on all meshes
@@ -465,7 +474,7 @@ void APDBViewer::ParseLigandCIFForResidue(const FString& Content, const TMap<FSt
 
             const auto* P1 = NormPos.Find(ID1);
             const auto* P2 = NormPos.Find(ID2);
-            if (P1 && P2) DrawBond(*P1, *P2, Ord, FLinearColor::Gray, GetRootComponent(), Info->BondMeshes);
+            if (P1 && P2) DrawBond(*P1, *P2, Ord, TEXT(""), TEXT(""), GetRootComponent(), Info->BondMeshes);
         }
         else if (bLoop && L.StartsWith(TEXT("data_"))) break;
     }
@@ -510,7 +519,9 @@ void APDBViewer::DrawSphere(float X, float Y, float Z, const FLinearColor& Col, 
     AllAtomMeshes.Add(Sph);
 }
 
-void APDBViewer::DrawBond(const FVector& S, const FVector& E, int32 Ord, const FLinearColor& Col, USceneComponent* Par, TArray<UStaticMeshComponent*>& Out)
+// Replace the DrawBond function in PDBViewer.cpp with this version:
+
+void APDBViewer::DrawBond(const FVector& S, const FVector& E, int32 Ord, const FString& Element1, const FString& Element2, USceneComponent* Par, TArray<UStaticMeshComponent*>& Out)
 {
     if (!CylinderMeshAsset || !SphereMaterialAsset || !Par) return;
 
@@ -518,20 +529,23 @@ void APDBViewer::DrawBond(const FVector& S, const FVector& E, int32 Ord, const F
     float Len = V.Size();
     if (Len < KINDA_SMALL_NUMBER) return;
 
-    FVector Mid = S + V * 0.5f;
     FRotator Rot = FRotationMatrix::MakeFromZ(V).Rotator();
     float Scale = Len / 100.0f;
 
-    auto MakeCyl = [&](const FVector& Pos)
+    FLinearColor Color1 = GetElementColor(Element1);
+    FLinearColor Color2 = GetElementColor(Element2);
+
+    auto MakeCyl = [&](const FVector& Pos, float ScaleZ, const FLinearColor& Color)
     {
         auto* Cyl = NewObject<UStaticMeshComponent>(this);
         Cyl->SetStaticMesh(CylinderMeshAsset);
         Cyl->SetWorldLocation(Pos);
         Cyl->SetWorldRotation(Rot);
-        Cyl->SetWorldScale3D(FVector(PDB::CYLINDER_SIZE, PDB::CYLINDER_SIZE, Scale));
+        Cyl->SetWorldScale3D(FVector(PDB::CYLINDER_SIZE, PDB::CYLINDER_SIZE, ScaleZ));
         Cyl->SetCollisionEnabled(ECollisionEnabled::NoCollision);
         auto* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, Cyl);
-        Mat->SetVectorParameterValue(TEXT("Color"), Col);
+        Mat->SetVectorParameterValue(TEXT("Color"), Color);
+        Mat->SetScalarParameterValue(TEXT("EmissiveIntensity"), 2.0f);
         Cyl->SetMaterial(0, Mat);
         Cyl->AttachToComponent(Par, FAttachmentTransformRules::KeepWorldTransform);
         Cyl->RegisterComponent();
@@ -539,16 +553,46 @@ void APDBViewer::DrawBond(const FVector& S, const FVector& E, int32 Ord, const F
         AllBondMeshes.Add(Cyl);
     };
 
-    if (Ord <= 1) { MakeCyl(Mid); return; }
+    // Calculate positions for first and second halves
+    FVector HalfDir = V * 0.5f;
+    FVector FirstMid = S + HalfDir * 0.5f;
+    FVector SecondMid = S + HalfDir + HalfDir * 0.5f;
+    float HalfScale = Scale * 0.5f;
+
+    if (Ord <= 1) 
+    { 
+        MakeCyl(FirstMid, HalfScale, Color1); 
+        MakeCyl(SecondMid, HalfScale, Color2); 
+        return; 
+    }
 
     FVector Perp = FVector::CrossProduct(V.GetSafeNormal(), FVector::UpVector);
-    if (Perp.SizeSquared() < KINDA_SMALL_NUMBER) Perp = FVector::CrossProduct(V.GetSafeNormal(), FVector::RightVector);
+    if (Perp.SizeSquared() < KINDA_SMALL_NUMBER) 
+        Perp = FVector::CrossProduct(V.GetSafeNormal(), FVector::RightVector);
     Perp.Normalize();
     FVector Off = Perp * PDB::BOND_OFFSET;
 
-    if (Ord == 2) { MakeCyl(Mid + Off); MakeCyl(Mid - Off); }
-    else if (Ord == 3) { MakeCyl(Mid); MakeCyl(Mid + Off); MakeCyl(Mid - Off); }
-    else MakeCyl(Mid);
+    if (Ord == 2) 
+    { 
+        MakeCyl(FirstMid + Off, HalfScale, Color1); 
+        MakeCyl(FirstMid - Off, HalfScale, Color1); 
+        MakeCyl(SecondMid + Off, HalfScale, Color2); 
+        MakeCyl(SecondMid - Off, HalfScale, Color2); 
+    }
+    else if (Ord == 3) 
+    { 
+        MakeCyl(FirstMid, HalfScale, Color1); 
+        MakeCyl(FirstMid + Off, HalfScale, Color1); 
+        MakeCyl(FirstMid - Off, HalfScale, Color1); 
+        MakeCyl(SecondMid, HalfScale, Color2); 
+        MakeCyl(SecondMid + Off, HalfScale, Color2); 
+        MakeCyl(SecondMid - Off, HalfScale, Color2); 
+    }
+    else 
+    {
+        MakeCyl(FirstMid, HalfScale, Color1);
+        MakeCyl(SecondMid, HalfScale, Color2);
+    }
 }
 
 FLinearColor APDBViewer::GetElementColor(const FString& E) const
@@ -787,6 +831,27 @@ FString APDBViewer::GetLigandDisplayName(const FString& Key) const
         : Key;
 }
 
+FLigandInfo* APDBViewer::GetVisibleLigandInfo() const
+{
+    FLigandInfo* BestInfo = nullptr;
+    int32 BestCount = 0;
+
+    // Find the (single) visible ligand with the most components
+    for (auto& Pair : LigandMap)
+    {
+        FLigandInfo* Info = Pair.Value;
+        if (!Info || !Info->bIsVisible) continue;
+        int32 Count = Info->AtomMeshes.Num() + Info->BondMeshes.Num();
+        if (Count > BestCount)
+        {
+            BestCount = Count;
+            BestInfo = Info;
+        }
+    }
+
+    return BestInfo;
+}
+
 // File I/O Functions
 
 void APDBViewer::SaveStructureToFile(const FString& Path)
@@ -933,13 +998,34 @@ void APDBViewer::ToggleMoleculeVisibility(const FString& MoleculeKey)
     if (!InfoPtr || !*InfoPtr) return;
     
     auto* Info = *InfoPtr;
-    Info->bIsVisible = !Info->bIsVisible;
+    bool bNewVisible = !Info->bIsVisible;
+
+    // If we're showing this molecule, hide all other ligands first
+    if (bNewVisible)
+    {
+        for (auto& P : LigandMap)
+        {
+            if (P.Key != MoleculeKey && P.Value)
+            {
+                P.Value->bIsVisible = false;
+                for (auto* M : P.Value->AtomMeshes)
+                    if (M) M->SetVisibility(false);
+                for (auto* M : P.Value->BondMeshes)
+                    if (M) M->SetVisibility(false);
+            }
+        }
+    }
+    
+    Info->bIsVisible = bNewVisible;
     
     for (auto* M : Info->AtomMeshes) 
         if (M) M->SetVisibility(Info->bIsVisible);
     
     for (auto* M : Info->BondMeshes) 
         if (M) M->SetVisibility(Info->bIsVisible);
+
+    // Notify UI so molecule list updates (visibility states refresh)
+    OnLigandsLoaded.Broadcast();
 }
 
 void APDBViewer::ToggleMoleculeNodeVisibility(UPDBMoleculeNode* Node)
