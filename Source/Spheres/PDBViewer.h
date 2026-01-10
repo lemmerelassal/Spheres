@@ -27,7 +27,6 @@ struct FResidueInfo
     bool bIsVisible = true;
 };
 
-
 USTRUCT()
 struct FLigandInfo
 {
@@ -165,8 +164,9 @@ protected:
     void ParseMMCIF(const FString& FileContent);
     void ParseSDF(const FString& FileContent);
     void CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FVector>>& ResidueAtoms, const TMap<FString, FResidueMetadata>& Metadata);
-    void FetchLigandBondsForResidue(const FString& ResidueKey, const FString& ResidueName, const TMap<FString, FVector>& AtomPositions);
-    void ParseLigandCIFForResidue(const FString& FileContent, const TMap<FString, FVector>& AtomPositions, FResidueInfo* ResInfo);
+    void DrawProteinBonds(const TMap<FString, FVector>& AtomPositions, FResidueInfo* ResInfo);
+    void FetchLigandBondsForHETATM(const FString& Key, const FString& Name, const TMap<FString, FVector>& Pos, FLigandInfo* LigInfo);
+    void ParseLigandCIFForLigand(const FString& FileContent, const TMap<FString, FVector>& AtomPositions, FLigandInfo* LigInfo);
     FString NormalizeAtomID(const FString& In) const;
     int32 ParseBondOrder(const FString& OrderStr) const;
     void DrawSphere(float X, float Y, float Z, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);

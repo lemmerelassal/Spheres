@@ -13,6 +13,41 @@ void UMoleculeListEntry::NativeConstruct()
     {
         ButtonToggleVisibility->OnClicked.AddDynamic(this, &UMoleculeListEntry::OnToggleClicked);
     }
+
+    ApplyStyling();
+}
+
+void UMoleculeListEntry::ApplyStyling()
+{
+    // Style the molecule name
+    if (TextMoleculeName)
+    {
+        TextMoleculeName->SetColorAndOpacity(FLinearColor(0.9f, 0.9f, 0.9f));
+    }
+
+    // Style the atom and bond counts
+    if (TextAtomCount)
+    {
+        TextAtomCount->SetColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f));
+    }
+
+    if (TextBondCount)
+    {
+        TextBondCount->SetColorAndOpacity(FLinearColor(0.7f, 0.7f, 0.7f));
+    }
+
+    // Style the toggle button
+    if (ButtonToggleVisibility)
+    {
+        ButtonToggleVisibility->SetColorAndOpacity(FLinearColor(0.15f, 0.3f, 0.6f));
+        
+        // Style the button text
+        UTextBlock* ButtonText = Cast<UTextBlock>(ButtonToggleVisibility->GetChildAt(0));
+        if (ButtonText)
+        {
+            ButtonText->SetColorAndOpacity(FLinearColor::White);
+        }
+    }
 }
 
 void UMoleculeListEntry::NativeOnListItemObjectSet(UObject* ListItemObject)
@@ -75,5 +110,15 @@ void UMoleculeListEntry::UpdateButtonText()
     {
         FString ToggleText = CurrentMoleculeNode->bIsVisible ? TEXT("Hide") : TEXT("Show");
         ButtonText->SetText(FText::FromString(ToggleText));
+
+        // Change button color based on visibility state
+        if (CurrentMoleculeNode->bIsVisible)
+        {
+            ButtonToggleVisibility->SetColorAndOpacity(FLinearColor(0.2f, 0.5f, 0.2f)); // Green when visible
+        }
+        else
+        {
+            ButtonToggleVisibility->SetColorAndOpacity(FLinearColor(0.5f, 0.2f, 0.2f)); // Red when hidden
+        }
     }
 }

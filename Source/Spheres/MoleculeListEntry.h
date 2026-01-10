@@ -40,6 +40,7 @@ private:
     void OnToggleClicked();
 
     void UpdateButtonText();
+    void ApplyStyling();
 
     UPROPERTY()
     UPDBMoleculeNode* CurrentMoleculeNode;
