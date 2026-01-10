@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "Http.h"
+#include "MMGBSA.h"
 #include "PDBViewer.generated.h"
 
 USTRUCT()
@@ -24,6 +25,9 @@ struct FResidueInfo
     GENERATED_BODY()
     FString RecordType, Chain, ResidueName, ResidueSeq;
     TArray<UStaticMeshComponent*> AtomMeshes, BondMeshes;
+    // Store raw atom positions and element symbols for receptor atoms (ATOM records)
+    TArray<FVector> AtomPositions;
+    TArray<FString> AtomElements;
     bool bIsVisible = true;
 };
 
@@ -33,6 +37,7 @@ struct FLigandInfo
     GENERATED_BODY()
     FString LigandName;
     TArray<UStaticMeshComponent*> AtomMeshes, BondMeshes;
+    TArray<FString> AtomElements; // Element symbol per atom (aligned with AtomMeshes)
     bool bIsVisible = false;
 };
 
@@ -43,6 +48,8 @@ class SPHERES_API UPDBTreeNode : public UObject
     GENERATED_BODY()
     
 public:
+    TMap<FString, FLigandInfo*> LigandMap;
+    TMap<FString, FResidueInfo*> ResidueMap;
     UPROPERTY(BlueprintReadOnly, Category = "PDB Viewer")
     FString DisplayName;
     
@@ -142,6 +149,26 @@ public:
 
     // Get the currently visible ligand (if any)
     FLigandInfo* GetVisibleLigandInfo() const;
+    TMap<FString, FLigandInfo*> LigandMap;
+    TMap<FString, FResidueInfo*> ResidueMap;
+
+    // Optional MD control widget class that will be spawned on BeginPlay if set
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
+    TSubclassOf<class UMDControlWidget> MDControlWidgetClass;
+
+    UPROPERTY()
+    class UMDControlWidget* MDControlWidgetInstance;
+
+    // Debug: highlight severe overlaps found by MMGBSA
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")
+    void HighlightOverlapAtoms(const TArray<FMMOverlapInfo>& Overlaps);
+
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")
+    void ClearOverlapMarkers();
+
+protected:
+    UPROPERTY() TArray<UStaticMeshComponent*> OverlapMarkers;
+
 
 protected:
     virtual void BeginPlay() override;
@@ -153,8 +180,6 @@ protected:
     UPROPERTY() TArray<UStaticMeshComponent*> AllBondMeshes;
     
     FString CurrentPDBContent, CurrentStructureID;
-    TMap<FString, FResidueInfo*> ResidueMap;
-    TMap<FString, FLigandInfo*> LigandMap;
 
     TSet<FString> ChainIDs; // Track all chains in the structure
     

@@ -18,6 +18,8 @@
 #include "Interfaces/IMainFrameModule.h"
 #include "Components/TreeView.h"
 #include "Components/ListView.h"
+#include "Kismet/GameplayStatics.h"
+#include "MDControlWidget.h"
 
 namespace PDB
 {
@@ -48,6 +50,21 @@ void APDBViewer::BeginPlay()
 
     if (auto *Cam = GetWorld()->SpawnActor<APDBCameraComponent>(APDBCameraComponent::StaticClass(), GetActorLocation(), FRotator::ZeroRotator))
         Cam->SetTargetActor(this);
+
+    // Spawn MD control widget if class is provided
+    if (MDControlWidgetClass)
+    {
+        APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+        if (PC)
+        {
+            MDControlWidgetInstance = CreateWidget<UMDControlWidget>(PC, MDControlWidgetClass);
+            if (MDControlWidgetInstance)
+            {
+                MDControlWidgetInstance->AddToViewport();
+                UE_LOG(LogTemp, Log, TEXT("PDBViewer: MD control widget added to viewport"));
+            }
+        }
+    }
 }
 
 void APDBViewer::FetchAndDisplayStructure(const FString &ID)
@@ -401,6 +418,7 @@ void APDBViewer::CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FV
                 if (A.Key.Len() > 1 && FChar::IsLower(A.Key[1]))
                     Element = A.Key.Left(2);
                 DrawSphere(A.Value.X, A.Value.Y, A.Value.Z, GetElementColor(Element), GetRootComponent(), LigInfo->AtomMeshes);
+                LigInfo->AtomElements.Add(Element);
             }
 
             // Set initial visibility
@@ -422,6 +440,16 @@ void APDBViewer::CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FV
             Info->Chain = M->Chain;
             Info->RecordType = M->RecordType;
             Info->bIsVisible = true;
+
+            // Store raw atom positions/elements for MMGBSA and other analysis
+            for (const auto &A : P.Value)
+            {
+                FString Element = A.Key.TrimStartAndEnd().Left(1);
+                if (A.Key.Len() > 1 && FChar::IsLower(A.Key[1]))
+                    Element = A.Key.Left(2);
+                Info->AtomPositions.Add(A.Value);
+                Info->AtomElements.Add(Element);
+            }
 
             // For ATOM records, only draw bonds (no spheres)
             DrawProteinBonds(P.Value, Info);
@@ -691,6 +719,94 @@ void APDBViewer::DrawBond(const FVector &S, const FVector &E, int32 Ord, const F
     {
         MakeCyl(FirstMid, HalfScale, Color1);
         MakeCyl(SecondMid, HalfScale, Color2);
+    }
+}
+
+
+void APDBViewer::ClearOverlapMarkers()
+{
+    for (auto *M : OverlapMarkers)
+    {
+        if (M && IsValid(M))
+            M->DestroyComponent();
+    }
+    OverlapMarkers.Empty();
+}
+
+
+void APDBViewer::HighlightOverlapAtoms(const TArray<FMMOverlapInfo>& Overlaps)
+{
+    ClearOverlapMarkers();
+    if (!SphereMeshAsset || !SphereMaterialAsset || !CylinderMeshAsset)
+        return;
+
+    APlayerController* PC = UGameplayStatics::GetPlayerController(GetWorld(), 0);
+    FVector FirstPos = FVector::ZeroVector;
+    bool bHaveFirst = false;
+
+    for (const FMMOverlapInfo& O : Overlaps)
+    {
+        // Create small red sphere at receptor position
+        auto *S1 = NewObject<UStaticMeshComponent>(this);
+        S1->SetStaticMesh(SphereMeshAsset);
+        S1->SetWorldScale3D(FVector(PDB::SPHERE_SIZE * 0.6f));
+        S1->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        auto *Mat1 = UMaterialInstanceDynamic::Create(SphereMaterialAsset, S1);
+        Mat1->SetVectorParameterValue(TEXT("Color"), FLinearColor::Red);
+        Mat1->SetScalarParameterValue(TEXT("EmissiveIntensity"), 8.0f);
+        S1->SetMaterial(0, Mat1);
+        S1->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+        S1->SetWorldLocation(O.ReceptorPosition);
+        S1->RegisterComponent();
+        OverlapMarkers.Add(S1);
+
+        // Create small red sphere at ligand position
+        auto *S2 = NewObject<UStaticMeshComponent>(this);
+        S2->SetStaticMesh(SphereMeshAsset);
+        S2->SetWorldScale3D(FVector(PDB::SPHERE_SIZE * 0.6f));
+        S2->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        auto *Mat2 = UMaterialInstanceDynamic::Create(SphereMaterialAsset, S2);
+        Mat2->SetVectorParameterValue(TEXT("Color"), FLinearColor::Red);
+        Mat2->SetScalarParameterValue(TEXT("EmissiveIntensity"), 8.0f);
+        S2->SetMaterial(0, Mat2);
+        S2->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+        S2->SetWorldLocation(O.LigandPosition);
+        S2->RegisterComponent();
+        OverlapMarkers.Add(S2);
+
+        // Create a thin cylinder connecting the two
+        FVector Dir = O.LigandPosition - O.ReceptorPosition;
+        float Len = Dir.Size();
+        if (Len > KINDA_SMALL_NUMBER)
+        {
+            FRotator Rot = FRotationMatrix::MakeFromZ(Dir).Rotator();
+            FVector Mid = O.ReceptorPosition + 0.5f * Dir;
+            auto *Cyl = NewObject<UStaticMeshComponent>(this);
+            Cyl->SetStaticMesh(CylinderMeshAsset);
+            Cyl->SetWorldLocation(Mid);
+            Cyl->SetWorldRotation(Rot);
+            Cyl->SetWorldScale3D(FVector(PDB::CYLINDER_SIZE * 0.4f, PDB::CYLINDER_SIZE * 0.4f, Len / 100.0f));
+            Cyl->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+            auto *MatC = UMaterialInstanceDynamic::Create(SphereMaterialAsset, Cyl);
+            MatC->SetVectorParameterValue(TEXT("Color"), FLinearColor::Red);
+            MatC->SetScalarParameterValue(TEXT("EmissiveIntensity"), 6.0f);
+            Cyl->SetMaterial(0, MatC);
+            Cyl->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+            Cyl->RegisterComponent();
+            OverlapMarkers.Add(Cyl);
+        }
+
+        if (!bHaveFirst)
+        {
+            FirstPos = O.LigandPosition;
+            bHaveFirst = true;
+        }
+    }
+
+    // Center camera on first overlap (optional)
+    if (bHaveFirst && PC)
+    {
+        PC->SetViewTarget(this);
     }
 }
 

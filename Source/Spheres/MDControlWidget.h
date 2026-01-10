@@ -80,6 +80,10 @@ protected:
     
     UPROPERTY(meta = (BindWidget))
     UTextBlock* Text_DampingValue;
+    
+    // Binding affinity display (optional)
+    UPROPERTY(meta = (BindWidgetOptional))
+    UTextBlock* Text_BindingAffinity;
 
 private:
     UPROPERTY()

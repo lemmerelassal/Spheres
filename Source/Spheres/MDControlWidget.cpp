@@ -249,12 +249,12 @@ void UMDControlWidget::OnIntegratorChanged(FString SelectedItem, ESelectInfo::Ty
     
     EMDIntegrator NewIntegrator = EMDIntegrator::Verlet;
     
-    if (SelectedItem == TEXT("Euler"))
-        NewIntegrator = EMDIntegrator::Euler;
-    else if (SelectedItem == TEXT("Verlet"))
+    if (SelectedItem == TEXT("Velocity Verlet"))
         NewIntegrator = EMDIntegrator::Verlet;
     else if (SelectedItem == TEXT("Leap-Frog"))
         NewIntegrator = EMDIntegrator::LeapFrog;
+    else if (SelectedItem == TEXT("Runge-Kutta 4th Order"))
+        NewIntegrator = EMDIntegrator::RungeKutta4;
     
     MDSimulation->SetIntegrator(NewIntegrator);
     UE_LOG(LogTemp, Log, TEXT("MD Widget: Set integrator to %s"), *SelectedItem);

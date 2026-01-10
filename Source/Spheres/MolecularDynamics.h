@@ -1,11 +1,10 @@
-// MolecularDynamics.h - Molecular Dynamics Engine for PDB Viewer
+// MolecularDynamics.h - Optimized O(N) MD Engine with Spatial Hashing
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "MolecularDynamics.generated.h"
 
-// Forward declarations
 class APDBViewer;
 class UStaticMeshComponent;
 
@@ -27,18 +26,35 @@ struct FAtomState
     float Mass;
     
     UPROPERTY()
+    float Charge;
+    
+    UPROPERTY()
     FString Element;
     
     UPROPERTY()
     UStaticMeshComponent* MeshComponent;
     
+    // Spatial hashing
+    int32 CellX;
+    int32 CellY;
+    int32 CellZ;
+    int64 CellHash;
+    
+    // Verlet list
+    TArray<int32> NeighborList;
+    int32 NeighborUpdateCounter;
+    
     FAtomState()
         : Position(FVector::ZeroVector)
         , Velocity(FVector::ZeroVector)
         , Force(FVector::ZeroVector)
-        , Mass(1.0f)
+        , Mass(12.011f)
+        , Charge(0.0f)
         , Element(TEXT("C"))
         , MeshComponent(nullptr)
+        , CellX(0), CellY(0), CellZ(0)
+        , CellHash(0)
+        , NeighborUpdateCounter(0)
     {}
 };
 
@@ -74,9 +90,9 @@ struct FBondConstraint
 UENUM(BlueprintType)
 enum class EMDIntegrator : uint8
 {
-    Euler UMETA(DisplayName = "Euler"),
-    Verlet UMETA(DisplayName = "Verlet"),
-    LeapFrog UMETA(DisplayName = "Leap-Frog")
+    Verlet UMETA(DisplayName = "Velocity Verlet"),
+    LeapFrog UMETA(DisplayName = "Leap-Frog"),
+    RungeKutta4 UMETA(DisplayName = "Runge-Kutta 4th Order")
 };
 
 UCLASS()
@@ -102,22 +118,25 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Molecular Dynamics")
     void StepSimulation(float DeltaTime);
     
-    // Initialize from PDB Viewer
+    // Initialize from ALL visible molecules in PDB Viewer
     UFUNCTION(BlueprintCallable, Category = "Molecular Dynamics")
     void InitializeFromViewer(APDBViewer* Viewer);
     
     // Parameter setters
     UFUNCTION(BlueprintCallable, Category = "Molecular Dynamics")
-    void SetTimeStep(float NewTimeStep) { TimeStep = NewTimeStep; }
+    void SetTimeStep(float NewTimeStep) { TimeStep = FMath::Clamp(NewTimeStep, 0.0001f, 0.01f); }
     
     UFUNCTION(BlueprintCallable, Category = "Molecular Dynamics")
-    void SetTemperature(float NewTemperature) { TargetTemperature = NewTemperature; }
+    void SetTemperature(float NewTemperature) { TargetTemperature = FMath::Max(0.0f, NewTemperature); }
     
     UFUNCTION(BlueprintCallable, Category = "Molecular Dynamics")
     void SetDamping(float NewDamping) { DampingFactor = FMath::Clamp(NewDamping, 0.0f, 1.0f); }
     
     UFUNCTION(BlueprintCallable, Category = "Molecular Dynamics")
     void SetIntegrator(EMDIntegrator NewIntegrator) { Integrator = NewIntegrator; }
+    
+    UFUNCTION(BlueprintCallable, Category = "Molecular Dynamics")
+    void SetCutoffDistance(float NewCutoff) { CutoffDistance = FMath::Max(100.0f, NewCutoff); RebuildSpatialHash(); }
     
     // Getters
     UFUNCTION(BlueprintPure, Category = "Molecular Dynamics")
@@ -134,46 +153,55 @@ public:
     
     UFUNCTION(BlueprintPure, Category = "Molecular Dynamics")
     int32 GetAtomCount() const { return Atoms.Num(); }
+    
+    UFUNCTION(BlueprintPure, Category = "Molecular Dynamics")
+    float GetCurrentTemperature() const;
 
 protected:
     virtual void BeginPlay() override;
     
     // Simulation parameters
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
-    float TimeStep = 0.001f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Parameters")
+    float TimeStep = 0.002f;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
-    float TargetTemperature = 300.0f; // Kelvin
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Parameters")
+    float TargetTemperature = 300.0f;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
-    float DampingFactor = 0.95f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Parameters")
+    float DampingFactor = 0.98f;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Parameters")
     EMDIntegrator Integrator = EMDIntegrator::Verlet;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Forces")
     bool bUseLennardJones = true;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Forces")
     bool bUseElectrostatics = false;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
-    float LJEpsilon = 0.1f; // Lennard-Jones well depth
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Forces")
+    float LJEpsilon = 0.5f;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
-    float LJSigma = 350.0f; // Lennard-Jones distance parameter
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Forces")
+    float LJSigma = 300.0f;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
-    float CutoffDistance = 1000.0f; // Interaction cutoff
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Forces")
+    float CutoffDistance = 1200.0f;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Constraints")
     bool bConstrainBonds = true;
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Molecular Dynamics")
-    int32 ConstraintIterations = 5;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Constraints")
+    int32 ConstraintIterations = 3;
+    
+    // Optimization parameters
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Optimization")
+    int32 NeighborListRebuildFrequency = 10;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MD Optimization")
+    float NeighborListSkin = 200.0f;
 
 private:
-    // Simulation state
     UPROPERTY()
     TArray<FAtomState> Atoms;
     
@@ -191,31 +219,67 @@ private:
     float TotalEnergy = 0.0f;
     float KineticEnergy = 0.0f;
     float PotentialEnergy = 0.0f;
+    int32 StepCount = 0;
     
-    // Previous positions for Verlet integration
+    // Verlet integration
     TArray<FVector> PreviousPositions;
+    TArray<FVector> PreviousAccelerations;
+    
+    // Spatial hashing for O(N) neighbor search
+    TMap<int64, TArray<int32>> SpatialHash;
+    float CellSize;
+    FVector GridMin;
+    FVector GridMax;
+    
+    // RK4 state storage
+    struct FRK4State
+    {
+        TArray<FVector> K1Vel, K2Vel, K3Vel, K4Vel;
+        TArray<FVector> K1Acc, K2Acc, K3Acc, K4Acc;
+    };
+    FRK4State RK4State;
     
     // Integration methods
-    void IntegrateEuler(float DeltaTime);
     void IntegrateVerlet(float DeltaTime);
     void IntegrateLeapFrog(float DeltaTime);
+    void IntegrateRungeKutta4(float DeltaTime);
     
-    // Force calculations
+    // Force calculations - O(N) with spatial hashing
     void CalculateForces();
     void CalculateBondForces();
-    void CalculateLennardJonesForces();
-    void CalculateElectrostaticForces();
+    void CalculateNonBondedForces();
     
-    // Constraint enforcement
-    void EnforceConstraints();
+    // Spatial hashing
+    void RebuildSpatialHash();
+    void UpdateSpatialHash();
+    int64 GetCellHash(int32 X, int32 Y, int32 Z) const;
+    void GetCellCoords(const FVector& Position, int32& OutX, int32& OutY, int32& OutZ) const;
+    void GetNeighborCells(int32 X, int32 Y, int32 Z, TArray<int64>& OutHashes) const;
     
-    // Energy calculations
+    // Neighbor lists
+    void UpdateNeighborLists();
+    bool ShouldRebuildNeighborLists() const;
+    
+    // Constraint enforcement - RATTLE algorithm
+    void EnforceConstraints(float DeltaTime);
+    
+    // Energy and temperature
     void UpdateEnergies();
-    
-    // Temperature control
     void ApplyThermostat();
     
-    // Helper functions
+    // Helpers
     float GetAtomMass(const FString& Element) const;
+    float GetAtomCharge(const FString& Element) const;
     void UpdateMeshPositions();
+    
+    // Element properties
+    struct FElementProperties
+    {
+        float Mass;
+        float Radius;
+        float Epsilon;
+        float Charge;
+    };
+    TMap<FString, FElementProperties> ElementDatabase;
+    void InitializeElementDatabase();
 };

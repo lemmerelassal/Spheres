@@ -9,6 +9,8 @@
 class UTextBlock;
 class UButton;
 class UPDBMoleculeNode;
+class AMMGBSA;
+struct FBindingAffinityResult;
 
 UCLASS()
 class SPHERES_API UMoleculeListEntry : public UUserWidget, public IUserObjectListEntry
@@ -35,13 +37,35 @@ protected:
     UPROPERTY(meta = (BindWidget))
     UButton* ButtonToggleVisibility;
 
+    UPROPERTY(meta = (BindWidget))
+    UButton* ButtonCalculateAffinity;
+
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock* TextBindingAffinity;
+
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock* TextKi;
+
+    UPROPERTY(meta = (BindWidget))
+    UTextBlock* TextAffinityClass;
+
 private:
     UFUNCTION()
     void OnToggleClicked();
 
+    UFUNCTION()
+    void OnCalculateAffinityClicked();
+
+    UFUNCTION()
+    void OnAffinityCalculated(const FBindingAffinityResult& Result);
+
     void UpdateButtonText();
     void ApplyStyling();
+    void UpdateAffinityDisplay();
 
     UPROPERTY()
     UPDBMoleculeNode* CurrentMoleculeNode;
+
+    UPROPERTY()
+    AMMGBSA* MMGBSARef;
 };
