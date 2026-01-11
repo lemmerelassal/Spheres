@@ -187,6 +187,9 @@ public:
     void ClearOverlapMarkers();
 
 protected:
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer")
+    bool bAutoGenerateHydrogens = true;
+
     UPROPERTY() TArray<UStaticMeshComponent*> OverlapMarkers;
     UPROPERTY() TArray<UStaticMeshComponent*> HydrogenMeshes;
 
