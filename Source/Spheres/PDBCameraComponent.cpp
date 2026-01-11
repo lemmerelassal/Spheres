@@ -29,7 +29,7 @@ APDBCameraComponent::APDBCameraComponent()
     RotationSpeed = 1.0f;
     PanSpeed = 5.0f;
     ZoomSpeed = 100.0f;
-    MinZoomDistance = 200.0f;
+    MinZoomDistance = 10.0f;
     MaxZoomDistance = 50000000.0f; // Much larger max distance
 
     CurrentYaw = 0.0f;
