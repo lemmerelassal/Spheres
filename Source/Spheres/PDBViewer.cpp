@@ -196,6 +196,7 @@ void APDBViewer::ParsePDB(const FString &Content)
 {
     CurrentPDBContent = Content;
     ClearResidueMap();
+    ClearLigandMap();  // Add this line
     ChainIDs.Empty();
 
     TArray<FString> Lines;
@@ -246,6 +247,7 @@ void APDBViewer::ParseMMCIF(const FString &Content)
 {
     CurrentPDBContent = Content;
     ClearResidueMap();
+    ClearLigandMap();  // Add this line
     ChainIDs.Empty();
 
     TArray<FString> Lines;
@@ -1203,9 +1205,10 @@ void APDBViewer::LoadStructureFromFile(const FString &Path)
 
     FString Ext = FPaths::GetExtension(Path).ToLower();
 
+    // Only clear structure ID and set content for PDB/CIF
     if (Ext == TEXT("pdb") || Ext == TEXT("cif"))
     {
-        ClearCurrentStructure();
+        // Don't call ClearCurrentStructure here - let individual parsers handle it
         CurrentStructureID = FPaths::GetBaseFilename(Path);
     }
 
