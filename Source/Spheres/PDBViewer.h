@@ -187,11 +187,13 @@ public:
     void ClearOverlapMarkers();
 
 protected:
+    UFUNCTION()
+    void OnLigandsLoadedHandler();
+
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer")
     bool bAutoGenerateHydrogens = true;
 
     UPROPERTY() TArray<UStaticMeshComponent*> OverlapMarkers;
-    UPROPERTY() TArray<UStaticMeshComponent*> HydrogenMeshes;
 
     virtual void BeginPlay() override;
     
@@ -204,7 +206,7 @@ protected:
     FString CurrentPDBContent, CurrentStructureID;
 
     TSet<FString> ChainIDs; // Track all chains in the structure
-    bool bHydrogensVisible = false;
+    bool bHydrogensVisible = true;
     
     void FetchAndDisplayStructure(const FString& PDB_ID);
     void FetchFileAsync(const FString& URL, TFunction<void(bool, const FString&)> Callback);
@@ -226,5 +228,4 @@ protected:
     
     // Hydrogen generation helpers
     int32 AddHydrogensToLigand(FLigandInfo* LigInfo);
-    void ClearHydrogens();
 };

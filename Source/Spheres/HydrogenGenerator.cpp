@@ -2,6 +2,129 @@
 
 #include "HydrogenGenerator.h"
 
+TArray<FVector> FHydrogenGenerator::GenerateHydrogenPositions(
+    const FVector& ParentPos,
+    int32 ParentIdx,
+    int32 NumHydrogens,
+    const TArray<FVector>& AllAtomPositions,
+    const TArray<TPair<int32, int32>>& BondPairs,
+    const FString& ParentElement)
+{
+    TArray<FVector> HPositions;
+    
+    const float BondLength = 50.0f; // Typical C-H bond length in your scale
+    
+    // Find existing bond directions from this atom
+    TArray<FVector> ExistingBondDirs;
+    for (const auto& Bond : BondPairs)
+    {
+        int32 OtherIdx = -1;
+        if (Bond.Key == ParentIdx)
+            OtherIdx = Bond.Value;
+        else if (Bond.Value == ParentIdx)
+            OtherIdx = Bond.Key;
+        
+        if (OtherIdx >= 0 && AllAtomPositions.IsValidIndex(OtherIdx))
+        {
+            FVector Dir = (AllAtomPositions[OtherIdx] - ParentPos).GetSafeNormal();
+            ExistingBondDirs.Add(Dir);
+        }
+    }
+    
+    // Generate hydrogen positions based on geometry
+    if (NumHydrogens == 1)
+    {
+        // Single hydrogen - opposite to sum of existing bonds
+        FVector SumDir = FVector::ZeroVector;
+        for (const FVector& Dir : ExistingBondDirs)
+            SumDir += Dir;
+        
+        FVector HDir = -SumDir.GetSafeNormal();
+        if (HDir.SizeSquared() < 0.01f) // If no existing bonds or they cancel
+            HDir = FVector::UpVector;
+        
+        HPositions.Add(ParentPos + HDir * BondLength);
+    }
+    else if (NumHydrogens == 2)
+    {
+        // Two hydrogens - tetrahedral or bent geometry
+        if (ExistingBondDirs.Num() == 2)
+        {
+            // Tetrahedral: find perpendicular plane
+            FVector SumDir = (ExistingBondDirs[0] + ExistingBondDirs[1]).GetSafeNormal();
+            FVector Perp = FVector::CrossProduct(ExistingBondDirs[0], ExistingBondDirs[1]).GetSafeNormal();
+            
+            if (Perp.SizeSquared() < 0.01f)
+                Perp = FVector::UpVector;
+            
+            float Angle = FMath::DegreesToRadians(109.5f / 2.0f); // Tetrahedral angle
+            FVector Base = -SumDir.GetSafeNormal();
+            
+            HPositions.Add(ParentPos + (Base.RotateAngleAxis(60.0f, Perp)).GetSafeNormal() * BondLength);
+            HPositions.Add(ParentPos + (Base.RotateAngleAxis(-60.0f, Perp)).GetSafeNormal() * BondLength);
+        }
+        else
+        {
+            // Default: opposite directions
+            HPositions.Add(ParentPos + FVector::UpVector * BondLength);
+            HPositions.Add(ParentPos + FVector::DownVector * BondLength);
+        }
+    }
+    else if (NumHydrogens == 3)
+    {
+        // Three hydrogens - tetrahedral geometry (like CH3)
+        FVector BaseDir = FVector::UpVector;
+        if (ExistingBondDirs.Num() > 0)
+            BaseDir = -ExistingBondDirs[0].GetSafeNormal();
+        
+        FVector Perp1 = FVector::CrossProduct(BaseDir, FVector::RightVector).GetSafeNormal();
+        if (Perp1.SizeSquared() < 0.01f)
+            Perp1 = FVector::CrossProduct(BaseDir, FVector::ForwardVector).GetSafeNormal();
+        
+        float Angle = FMath::DegreesToRadians(109.5f);
+        FVector Base = BaseDir.GetSafeNormal();
+        
+        for (int32 i = 0; i < 3; ++i)
+        {
+            float RotAngle = i * 120.0f;
+            FVector Rotated = Base.RotateAngleAxis(RotAngle, Perp1);
+            HPositions.Add(ParentPos + Rotated * BondLength);
+        }
+    }
+    else if (NumHydrogens == 4)
+    {
+        // Four hydrogens - methane tetrahedral geometry
+        float Angle = FMath::DegreesToRadians(109.5f);
+        HPositions.Add(ParentPos + FVector(1, 1, 1).GetSafeNormal() * BondLength);
+        HPositions.Add(ParentPos + FVector(-1, -1, 1).GetSafeNormal() * BondLength);
+        HPositions.Add(ParentPos + FVector(-1, 1, -1).GetSafeNormal() * BondLength);
+        HPositions.Add(ParentPos + FVector(1, -1, -1).GetSafeNormal() * BondLength);
+    }
+    
+    return HPositions;
+}
+
+
+int32 FHydrogenGenerator::GetTypicalValence(const FString& Element)
+{
+    static const TMap<FString, int32> Valences = {
+        {TEXT("C"), 4},   // Carbon
+        {TEXT("N"), 3},   // Nitrogen (can be 3 or 5, use 3 for organic)
+        {TEXT("O"), 2},   // Oxygen
+        {TEXT("S"), 2},   // Sulfur (can be 2, 4, or 6, use 2 for organic)
+        {TEXT("P"), 3},   // Phosphorus (can be 3 or 5)
+        {TEXT("F"), 1},   // Fluorine
+        {TEXT("CL"), 1},  // Chlorine
+        {TEXT("BR"), 1},  // Bromine
+        {TEXT("I"), 1},   // Iodine
+        {TEXT("B"), 3},   // Boron
+        {TEXT("SI"), 4},  // Silicon
+    };
+    
+    const int32* ValencePtr = Valences.Find(Element);
+    return ValencePtr ? *ValencePtr : 0;
+}
+
 TArray<TPair<FVector, int32>> FHydrogenGenerator::GenerateHydrogens(
     const TArray<FVector>& AtomPositions,
     const TArray<FString>& AtomElements,
@@ -11,76 +134,86 @@ TArray<TPair<FVector, int32>> FHydrogenGenerator::GenerateHydrogens(
     TArray<TPair<FVector, int32>> Hydrogens;
     
     if (AtomPositions.Num() != AtomElements.Num())
-        return Hydrogens;
-    
-    // Build bond connectivity with bond orders
-    TArray<FAtomBondInfo> Atoms;
-    Atoms.SetNum(AtomPositions.Num());
-    
-    for (int32 i = 0; i < AtomPositions.Num(); ++i)
     {
-        Atoms[i].Element = AtomElements[i];
-        Atoms[i].Position = AtomPositions[i];
+        UE_LOG(LogTemp, Error, TEXT("HydrogenGenerator: Atom position/element count mismatch"));
+        return Hydrogens;
     }
     
-    // Record bonds with their orders
+    // Count bonds for each atom
+    TArray<int32> BondCounts;
+    BondCounts.SetNum(AtomPositions.Num());
+    for (int32 i = 0; i < BondCounts.Num(); ++i)
+        BondCounts[i] = 0;
+    
+    // Count total bond order for each atom
     for (int32 i = 0; i < BondPairs.Num(); ++i)
     {
-        const auto& Bond = BondPairs[i];
-        int32 Idx1 = Bond.Key;
-        int32 Idx2 = Bond.Value;
+        int32 Atom1 = BondPairs[i].Key;
+        int32 Atom2 = BondPairs[i].Value;
         int32 Order = BondOrders.IsValidIndex(i) ? BondOrders[i] : 1;
         
-        if (Atoms.IsValidIndex(Idx1) && Atoms.IsValidIndex(Idx2))
-        {
-            Atoms[Idx1].BondedAtomIndices.Add(Idx2);
-            Atoms[Idx1].BondOrders.Add(Order);
-            Atoms[Idx1].BondCount++;
-            Atoms[Idx1].TotalBondOrder += Order;
-            
-            Atoms[Idx2].BondedAtomIndices.Add(Idx1);
-            Atoms[Idx2].BondOrders.Add(Order);
-            Atoms[Idx2].BondCount++;
-            Atoms[Idx2].TotalBondOrder += Order;
-        }
+        // Treat aromatic bonds (order 4) as 1.5 bonds, round up to 2
+        if (Order == 4)
+            Order = 2;
+        
+        if (BondCounts.IsValidIndex(Atom1))
+            BondCounts[Atom1] += Order;
+        if (BondCounts.IsValidIndex(Atom2))
+            BondCounts[Atom2] += Order;
     }
     
+    UE_LOG(LogTemp, Log, TEXT("HydrogenGenerator: Processing %d atoms, %d bonds"), 
+        AtomPositions.Num(), BondPairs.Num());
+    
     // Generate hydrogens for each heavy atom
-    for (int32 i = 0; i < Atoms.Num(); ++i)
+    for (int32 AtomIdx = 0; AtomIdx < AtomPositions.Num(); ++AtomIdx)
     {
-        const FAtomBondInfo& Atom = Atoms[i];
+        FString Element = AtomElements[AtomIdx].ToUpper();
         
         // Skip if already hydrogen
-        if (Atom.Element.Equals(TEXT("H"), ESearchCase::IgnoreCase) ||
-            Atom.Element.Equals(TEXT("D"), ESearchCase::IgnoreCase))
+        if (Element == TEXT("H") || Element == TEXT("D"))
             continue;
         
-        int32 NumHydrogens = GetIdealHydrogenCount(Atom.Element, Atom.TotalBondOrder);
-        if (NumHydrogens <= 0)
+        // Get typical valence for this element
+        int32 TypicalValence = GetTypicalValence(Element);
+        if (TypicalValence == 0)
+            continue; // Unknown element or doesn't typically bond to H
+        
+        // Calculate how many hydrogens needed
+        int32 CurrentBonds = BondCounts[AtomIdx];
+        int32 HydrogensNeeded = TypicalValence - CurrentBonds;
+        
+        // Log detailed info for each atom
+        UE_LOG(LogTemp, Log, TEXT("  Atom %d (%s): Valence=%d, CurrentBonds=%d, HNeeded=%d"), 
+            AtomIdx, *Element, TypicalValence, CurrentBonds, HydrogensNeeded);
+        
+        if (HydrogensNeeded <= 0)
             continue;
         
-        // Get positions of bonded atoms
-        TArray<FVector> BondedPositions;
-        for (int32 BondedIdx : Atom.BondedAtomIndices)
-        {
-            if (Atoms.IsValidIndex(BondedIdx))
-                BondedPositions.Add(Atoms[BondedIdx].Position);
-        }
+        // Clamp to reasonable values
+        HydrogensNeeded = FMath::Clamp(HydrogensNeeded, 0, 4);
         
         // Generate hydrogen positions
-        TArray<FVector> HPositions = GenerateHydrogensForAtom(
-            Atom.Position,
-            Atom.Element,
-            BondedPositions,
-            NumHydrogens,
-            Atom.TotalBondOrder);
+        TArray<FVector> HPositions = GenerateHydrogenPositions(
+            AtomPositions[AtomIdx],
+            AtomIdx,
+            HydrogensNeeded,
+            AtomPositions,
+            BondPairs,
+            Element
+        );
         
-        // Add to result array with parent atom index
+        // Add each hydrogen
         for (const FVector& HPos : HPositions)
         {
-            Hydrogens.Add(TPair<FVector, int32>(HPos, i));
+            Hydrogens.Add(TPair<FVector, int32>(HPos, AtomIdx));
         }
+        
+        UE_LOG(LogTemp, Log, TEXT("    Generated %d hydrogens for atom %d"), 
+            HPositions.Num(), AtomIdx);
     }
+    
+    UE_LOG(LogTemp, Log, TEXT("HydrogenGenerator: Total hydrogens generated: %d"), Hydrogens.Num());
     
     return Hydrogens;
 }
