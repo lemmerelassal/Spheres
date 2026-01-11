@@ -20,6 +20,7 @@
 #include "Components/ListView.h"
 #include "Kismet/GameplayStatics.h"
 #include "MDControlWidget.h"
+#include "HydrogenGenerator.h"
 
 namespace PDB
 {
@@ -43,6 +44,8 @@ APDBViewer::APDBViewer()
     SphereMaterialAsset = Mat.Object;
 }
 
+// In PDBViewer.cpp, modify BeginPlay:
+
 void APDBViewer::BeginPlay()
 {
     Super::BeginPlay();
@@ -65,6 +68,17 @@ void APDBViewer::BeginPlay()
             }
         }
     }
+    
+    // ADD THIS: Delay to let structure load, then test hydrogens
+    FTimerHandle TimerHandle;
+    GetWorld()->GetTimerManager().SetTimer(TimerHandle, [this]()
+    {
+        UE_LOG(LogTemp, Warning, TEXT("===== TESTING HYDROGEN GENERATION ====="));
+        DebugPrintLigandInfo();
+        AddExplicitHydrogens();
+        int32 Count = GetHydrogenCount();
+        UE_LOG(LogTemp, Warning, TEXT("Created %d hydrogen atoms"), Count);
+    }, 3.0f, false);  // Wait 3 seconds for structure to load
 }
 
 void APDBViewer::FetchAndDisplayStructure(const FString &ID)
@@ -339,12 +353,62 @@ void APDBViewer::ParseSDF(const FString &Content)
             }
         }
 
-        FString Key = FString::Printf(TEXT("%s"), *MoleculeName);
+        
+FString Key = FString::Printf(TEXT("%s"), *MoleculeName);
 
         auto *Info = new FLigandInfo();
         Info->LigandName = MoleculeName;
         Info->bIsVisible = false;
+        
+        // Store atom positions and elements for hydrogen generation
+        Info->AtomPositions = AtomPositions;
+        Info->AtomElements = AtomElements;
+        
+        // Store bond connectivity
+        for (int32 i = 0; i < BondPairs.Num(); ++i)
+        {
+            Info->BondPairs.Add(BondPairs[i]);
+            Info->BondOrders.Add(BondOrders[i]); // Store the bond order too
+        }
 
+        // Generate and add hydrogens immediately if auto-generation is enabled
+        if (bAutoGenerateHydrogens)
+        {
+            TArray<TPair<FVector, int32>> Hydrogens = FHydrogenGenerator::GenerateHydrogens(
+                Info->AtomPositions,
+                Info->AtomElements,
+                Info->BondPairs,
+                Info->BondOrders);
+            
+            UE_LOG(LogTemp, Log, TEXT("Generated %d hydrogens for molecule %s"), Hydrogens.Num(), *MoleculeName);
+            
+            // Add hydrogen positions and elements to the ligand info
+            for (const auto& HPair : Hydrogens)
+            {
+                FVector HPos = HPair.Key;
+                int32 ParentIdx = HPair.Value;
+                
+                // Add to positions and elements arrays
+                Info->AtomPositions.Add(HPos);
+                Info->AtomElements.Add(TEXT("H"));
+                
+                // Draw hydrogen sphere
+                DrawSphere(HPos.X, HPos.Y, HPos.Z, FLinearColor::White, GetRootComponent(), Info->AtomMeshes);
+                
+                // Draw bond to parent
+                if (Info->AtomPositions.IsValidIndex(ParentIdx))
+                {
+                    FVector ParentPos = Info->AtomPositions[ParentIdx];
+                    FString ParentElement = Info->AtomElements.IsValidIndex(ParentIdx) 
+                        ? Info->AtomElements[ParentIdx] 
+                        : TEXT("C");
+                    
+                    DrawBond(ParentPos, HPos, 1, ParentElement, TEXT("H"), GetRootComponent(), Info->BondMeshes);
+                }
+            }
+        }
+
+        // Draw heavy atoms
         for (int32 i = 0; i < AtomPositions.Num(); ++i)
         {
             FLinearColor Color = GetElementColor(AtomElements[i]);
@@ -352,6 +416,7 @@ void APDBViewer::ParseSDF(const FString &Content)
                        Color, GetRootComponent(), Info->AtomMeshes);
         }
 
+        // Draw bonds between heavy atoms
         for (int32 i = 0; i < BondPairs.Num(); ++i)
         {
             int32 Atom1 = BondPairs[i].Key;
@@ -405,20 +470,25 @@ void APDBViewer::CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FV
             continue;
 
         // Check if this is a HETATM entry - add to ligand map instead
+        
+        
         if (M->RecordType.StartsWith(TEXT("HETATM")))
         {
             auto *LigInfo = new FLigandInfo();
             LigInfo->LigandName = FString::Printf(TEXT("%s-%s-%s"), *M->ResidueName, *M->ResidueSeq, *M->Chain);
             LigInfo->bIsVisible = false;
 
-            // Draw atoms
+            // Store atom positions and elements
             for (const auto &A : P.Value)
             {
                 FString Element = A.Key.TrimStartAndEnd().Left(1);
                 if (A.Key.Len() > 1 && FChar::IsLower(A.Key[1]))
                     Element = A.Key.Left(2);
-                DrawSphere(A.Value.X, A.Value.Y, A.Value.Z, GetElementColor(Element), GetRootComponent(), LigInfo->AtomMeshes);
+                
+                LigInfo->AtomPositions.Add(A.Value);
                 LigInfo->AtomElements.Add(Element);
+                
+                DrawSphere(A.Value.X, A.Value.Y, A.Value.Z, GetElementColor(Element), GetRootComponent(), LigInfo->AtomMeshes);
             }
 
             // Set initial visibility
@@ -504,6 +574,7 @@ void APDBViewer::FetchLigandBondsForHETATM(const FString &Key, const FString &Na
                    });
 }
 
+
 void APDBViewer::ParseLigandCIFForLigand(const FString &Content, const TMap<FString, FVector> &Pos, FLigandInfo *Info)
 {
     if (!Info)
@@ -573,6 +644,23 @@ void APDBViewer::ParseLigandCIFForLigand(const FString &Content, const TMap<FStr
             const auto *P2 = NormPos.Find(ID2);
             if (P1 && P2)
             {
+                // Find atom indices in the stored positions
+                int32 Idx1 = -1, Idx2 = -1;
+                for (int32 i = 0; i < Info->AtomPositions.Num(); ++i)
+                {
+                    if (Info->AtomPositions[i].Equals(*P1, 0.1f))
+                        Idx1 = i;
+                    if (Info->AtomPositions[i].Equals(*P2, 0.1f))
+                        Idx2 = i;
+                }
+                
+                // Store bond connectivity
+                if (Idx1 >= 0 && Idx2 >= 0)
+                {
+                    Info->BondPairs.Add(TPair<int32, int32>(Idx1, Idx2));
+                    Info->BondOrders.Add(Ord);
+                }
+                
                 // Extract element symbols from atom IDs (first 1-2 characters)
                 FString Elem1, Elem2;
                 if (ID1.Len() > 0)
@@ -833,9 +921,12 @@ void APDBViewer::ClearLigandMap()
     LigandMap.Empty();
 }
 
+
 void APDBViewer::ClearCurrentStructure()
 {
     ClearResidueMap();
+    ClearHydrogens(); // Add this line
+    
     for (auto *M : AllAtomMeshes)
         if (M && IsValid(M))
             M->DestroyComponent();
@@ -1259,4 +1350,243 @@ void APDBViewer::ToggleMoleculeNodeVisibility(UPDBMoleculeNode *Node)
     {
         Node->bIsVisible = (*InfoPtr)->bIsVisible;
     }
+}
+
+
+void APDBViewer::AddExplicitHydrogens()
+{
+    if (bHydrogensVisible)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Hydrogens already visible"));
+        return;
+    }
+    
+    int32 TotalHydrogens = 0;
+    
+    // Add hydrogens to all visible ligands
+    for (auto& Pair : LigandMap)
+    {
+        FLigandInfo* LigInfo = Pair.Value;
+        if (LigInfo && LigInfo->bIsVisible)
+        {
+            UE_LOG(LogTemp, Log, TEXT("Adding hydrogens to ligand: %s"), *Pair.Key);
+            UE_LOG(LogTemp, Log, TEXT("  Atoms: %d, Elements: %d, Bonds: %d"), 
+                LigInfo->AtomPositions.Num(), 
+                LigInfo->AtomElements.Num(),
+                LigInfo->BondPairs.Num());
+            
+            int32 Count = AddHydrogensToLigand(LigInfo);
+            TotalHydrogens += Count;
+            UE_LOG(LogTemp, Log, TEXT("  Generated %d hydrogens"), Count);
+        }
+    }
+    
+    bHydrogensVisible = true;
+    UE_LOG(LogTemp, Log, TEXT("Added %d total explicit hydrogens"), TotalHydrogens);
+}
+
+
+void APDBViewer::RemoveExplicitHydrogens()
+{
+    if (!bHydrogensVisible)
+        return;
+    
+    ClearHydrogens();
+    bHydrogensVisible = false;
+    UE_LOG(LogTemp, Log, TEXT("Removed explicit hydrogens"));
+}
+
+void APDBViewer::ToggleHydrogens()
+{
+    if (bHydrogensVisible)
+        RemoveExplicitHydrogens();
+    else
+        AddExplicitHydrogens();
+}
+
+int32 APDBViewer::AddHydrogensToLigand(FLigandInfo* LigInfo)
+{
+    if (!LigInfo)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("LigInfo is null"));
+        return 0;
+    }
+    
+    if (LigInfo->AtomPositions.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No atom positions stored in ligand"));
+        return 0;
+    }
+    
+    if (LigInfo->AtomElements.Num() != LigInfo->AtomPositions.Num())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Atom positions (%d) and elements (%d) count mismatch"), 
+            LigInfo->AtomPositions.Num(), LigInfo->AtomElements.Num());
+        return 0;
+    }
+    
+    // Use stored bond pairs and orders if available, otherwise infer from distances
+    TArray<TPair<int32, int32>> BondPairs = LigInfo->BondPairs;
+    TArray<int32> BondOrders = LigInfo->BondOrders;
+    
+    if (BondPairs.Num() == 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("No bond pairs stored, inferring from distances..."));
+        const float BondThreshold = 100.0f; // Scaled distance threshold
+        
+        for (int32 i = 0; i < LigInfo->AtomPositions.Num(); ++i)
+        {
+            for (int32 j = i + 1; j < LigInfo->AtomPositions.Num(); ++j)
+            {
+                float Dist = FVector::Dist(LigInfo->AtomPositions[i], LigInfo->AtomPositions[j]);
+                if (Dist < BondThreshold)
+                {
+                    BondPairs.Add(TPair<int32, int32>(i, j));
+                    BondOrders.Add(1); // Assume single bond when inferring
+                }
+            }
+        }
+        UE_LOG(LogTemp, Log, TEXT("Inferred %d bonds"), BondPairs.Num());
+    }
+    
+    // Ensure bond orders array matches bond pairs
+    if (BondOrders.Num() != BondPairs.Num())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Bond orders (%d) don't match bond pairs (%d), filling with 1s"), 
+            BondOrders.Num(), BondPairs.Num());
+        BondOrders.SetNum(BondPairs.Num());
+        for (int32 i = 0; i < BondOrders.Num(); ++i)
+        {
+            if (BondOrders[i] == 0)
+                BondOrders[i] = 1;
+        }
+    }
+    
+    // Generate hydrogen positions with bond orders
+    TArray<TPair<FVector, int32>> Hydrogens = FHydrogenGenerator::GenerateHydrogens(
+        LigInfo->AtomPositions,
+        LigInfo->AtomElements,
+        BondPairs,
+        BondOrders);
+    
+    UE_LOG(LogTemp, Log, TEXT("Generated %d hydrogen positions"), Hydrogens.Num());
+    
+    // Draw hydrogen atoms
+    for (const auto& HPair : Hydrogens)
+    {
+        FVector HPos = HPair.Key;
+        int32 ParentIdx = HPair.Value;
+        
+        // Hydrogen is white
+        FLinearColor HColor = FLinearColor::White;
+        
+        auto* HSphere = NewObject<UStaticMeshComponent>(this);
+        HSphere->SetStaticMesh(SphereMeshAsset);
+        HSphere->SetWorldScale3D(FVector(0.3f)); // Smaller than regular atoms
+        HSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+        
+        auto* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, HSphere);
+        Mat->SetVectorParameterValue(TEXT("Color"), HColor);
+        Mat->SetScalarParameterValue(TEXT("EmissiveIntensity"), 3.0f);
+        HSphere->SetMaterial(0, Mat);
+        
+        HSphere->AttachToComponent(GetRootComponent(), FAttachmentTransformRules::KeepWorldTransform);
+        HSphere->SetWorldLocation(HPos);
+        HSphere->RegisterComponent();
+        
+        HydrogenMeshes.Add(HSphere);
+        
+        // Draw bond between hydrogen and parent atom
+        if (LigInfo->AtomPositions.IsValidIndex(ParentIdx))
+        {
+            FVector ParentPos = LigInfo->AtomPositions[ParentIdx];
+            FString ParentElement = LigInfo->AtomElements.IsValidIndex(ParentIdx) 
+                ? LigInfo->AtomElements[ParentIdx] 
+                : TEXT("C");
+            
+            DrawBond(ParentPos, HPos, 1, ParentElement, TEXT("H"), 
+                    GetRootComponent(), HydrogenMeshes);
+        }
+    }
+    
+    return Hydrogens.Num();
+}
+
+
+void APDBViewer::ClearHydrogens()
+{
+    for (auto* Mesh : HydrogenMeshes)
+    {
+        if (Mesh && IsValid(Mesh))
+            Mesh->DestroyComponent();
+    }
+    HydrogenMeshes.Empty();
+}
+
+
+
+void APDBViewer::DebugPrintLigandInfo()
+{
+    UE_LOG(LogTemp, Log, TEXT("=== Ligand Debug Info ==="));
+    UE_LOG(LogTemp, Log, TEXT("Total ligands: %d"), LigandMap.Num());
+    
+    for (auto& Pair : LigandMap)
+    {
+        FLigandInfo* Info = Pair.Value;
+        if (!Info)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Ligand '%s': NULL INFO"), *Pair.Key);
+            continue;
+        }
+        
+        UE_LOG(LogTemp, Log, TEXT("Ligand '%s':"), *Pair.Key);
+        UE_LOG(LogTemp, Log, TEXT("  Name: %s"), *Info->LigandName);
+        UE_LOG(LogTemp, Log, TEXT("  Visible: %s"), Info->bIsVisible ? TEXT("YES") : TEXT("NO"));
+        UE_LOG(LogTemp, Log, TEXT("  Atom Positions: %d"), Info->AtomPositions.Num());
+        UE_LOG(LogTemp, Log, TEXT("  Atom Elements: %d"), Info->AtomElements.Num());
+        UE_LOG(LogTemp, Log, TEXT("  Bond Pairs: %d"), Info->BondPairs.Num());
+        UE_LOG(LogTemp, Log, TEXT("  Bond Orders: %d"), Info->BondOrders.Num());
+        UE_LOG(LogTemp, Log, TEXT("  Atom Meshes: %d"), Info->AtomMeshes.Num());
+        UE_LOG(LogTemp, Log, TEXT("  Bond Meshes: %d"), Info->BondMeshes.Num());
+        
+        // Print element breakdown
+        TMap<FString, int32> ElementCounts;
+        for (const FString& Elem : Info->AtomElements)
+        {
+            int32& Count = ElementCounts.FindOrAdd(Elem, 0);
+            Count++;
+        }
+        
+        UE_LOG(LogTemp, Log, TEXT("  Elements:"));
+        for (auto& ElemPair : ElementCounts)
+        {
+            UE_LOG(LogTemp, Log, TEXT("    %s: %d"), *ElemPair.Key, ElemPair.Value);
+        }
+        
+        // Print bond order breakdown
+        if (Info->BondOrders.Num() > 0)
+        {
+            int32 Single = 0, Double = 0, Triple = 0, Aromatic = 0;
+            for (int32 Order : Info->BondOrders)
+            {
+                if (Order == 1) Single++;
+                else if (Order == 2) Double++;
+                else if (Order == 3) Triple++;
+                else Aromatic++;
+            }
+            UE_LOG(LogTemp, Log, TEXT("  Bond Types: Single=%d, Double=%d, Triple=%d, Other=%d"), 
+                Single, Double, Triple, Aromatic);
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Hydrogen meshes: %d"), HydrogenMeshes.Num());
+    UE_LOG(LogTemp, Log, TEXT("Hydrogens visible: %s"), bHydrogensVisible ? TEXT("YES") : TEXT("NO"));
+    UE_LOG(LogTemp, Log, TEXT("======================"));
+}
+
+
+
+int32 APDBViewer::GetHydrogenCount() const
+{
+    return HydrogenMeshes.Num();
 }

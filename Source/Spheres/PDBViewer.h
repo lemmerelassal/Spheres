@@ -38,6 +38,9 @@ struct FLigandInfo
     FString LigandName;
     TArray<UStaticMeshComponent*> AtomMeshes, BondMeshes;
     TArray<FString> AtomElements; // Element symbol per atom (aligned with AtomMeshes)
+    TArray<FVector> AtomPositions; // Store positions for hydrogen generation
+    TArray<TPair<int32, int32>> BondPairs; // Store bond connectivity
+    TArray<int32> BondOrders; // Bond order for each bond (aligned with BondPairs)
     bool bIsVisible = false;
 };
 
@@ -141,6 +144,23 @@ public:
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleMoleculeVisibility(const FString& MoleculeKey);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleMoleculeNodeVisibility(UPDBMoleculeNode* Node);
     
+    // Hydrogen generation functions
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
+    void AddExplicitHydrogens();
+    
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
+    void RemoveExplicitHydrogens();
+    
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
+    void ToggleHydrogens();
+    
+    // Debug functions
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")
+    void DebugPrintLigandInfo();
+
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")
+    int32 GetHydrogenCount() const;
+    
     // Legacy functions (kept for backwards compatibility)
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<FString> GetResidueList() const;
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<FString> GetLigandList() const;
@@ -168,9 +188,8 @@ public:
 
 protected:
     UPROPERTY() TArray<UStaticMeshComponent*> OverlapMarkers;
+    UPROPERTY() TArray<UStaticMeshComponent*> HydrogenMeshes;
 
-
-protected:
     virtual void BeginPlay() override;
     
     UPROPERTY() UStaticMesh* SphereMeshAsset;
@@ -182,6 +201,7 @@ protected:
     FString CurrentPDBContent, CurrentStructureID;
 
     TSet<FString> ChainIDs; // Track all chains in the structure
+    bool bHydrogensVisible = false;
     
     void FetchAndDisplayStructure(const FString& PDB_ID);
     void FetchFileAsync(const FString& URL, TFunction<void(bool, const FString&)> Callback);
@@ -200,4 +220,8 @@ protected:
     void ClearResidueMap();
     void ClearLigandMap();
     bool ShowFileDialog(bool bSave, FString& OutFilePath);
+    
+    // Hydrogen generation helpers
+    int32 AddHydrogensToLigand(FLigandInfo* LigInfo);
+    void ClearHydrogens();
 };

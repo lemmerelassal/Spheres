@@ -54,6 +54,18 @@ void AMMGBSA::InitializeElementDatabase()
     Add(TEXT("CL"), 1.75f, 0.2650f, -0.1f,  1.05f);
     Add(TEXT("BR"), 1.85f, 0.3200f, -0.1f,  1.10f);
     Add(TEXT("I"),  1.98f, 0.4000f, -0.1f,  1.15f);
+    
+    // Metal ions (common in protein structures)
+    Add(TEXT("ZN"), 1.39f, 0.2500f, 2.0f,   1.20f);  // Zinc(II)
+    Add(TEXT("Z"),  1.39f, 0.2500f, 2.0f,   1.20f);  // Zinc alias
+    Add(TEXT("MG"), 1.73f, 0.8750f, 2.0f,   1.18f);  // Magnesium(II)
+    Add(TEXT("M"),  1.73f, 0.8750f, 2.0f,   1.18f);  // Magnesium alias
+    Add(TEXT("CA"), 2.31f, 0.4500f, 2.0f,   1.22f);  // Calcium(II)
+    Add(TEXT("FE"), 1.47f, 0.0500f, 2.0f,   1.20f);  // Iron(II/III)
+    Add(TEXT("MN"), 1.61f, 0.0500f, 2.0f,   1.20f);  // Manganese(II)
+    Add(TEXT("CU"), 1.40f, 0.0500f, 2.0f,   1.20f);  // Copper(II)
+    Add(TEXT("NA"), 2.27f, 0.0028f, 1.0f,   1.15f);  // Sodium(I)
+    Add(TEXT("K"),  2.75f, 0.0003f, 1.0f,   1.25f);  // Potassium(I)
 }
 
 void AMMGBSA::InitializeFromViewer(APDBViewer* Viewer)
@@ -327,13 +339,23 @@ FBindingAffinityResult AMMGBSA::CalculateBindingAffinity(const FString& LigandKe
         }
     }
 
-    // Calculate MM energies
+    // Calculate MM energies using ONLY pairwise receptor-ligand interactions
+    // This avoids catastrophic cancellation from large internal energies
+    Result.DeltaEMM = CalculateMMEnergyPair(ReceptorAtoms, Ligand);
+    
+    // Still calculate full energies for diagnostic logging, but don't use them
     Result.EMM_Complex = CalculateMMEnergy(Complex);
     Result.EMM_Receptor = CalculateMMEnergy(ReceptorAtoms);
     Result.EMM_Ligand = CalculateMMEnergy(Ligand);
-    // Use receptor-ligand pairwise energy for ΔEMM to avoid catastrophic cancellation of large internal terms
-    Result.DeltaEMM = CalculateMMEnergyPair(ReceptorAtoms, Ligand);
-    UE_LOG(LogTemp, Verbose, TEXT("MMGBSA: ΔEMM computed from receptor-ligand pairwise interactions = %.6f"), Result.DeltaEMM);
+    
+    UE_LOG(LogTemp, Verbose, TEXT("MMGBSA: ΔEMM (receptor-ligand pairs only) = %.6f kcal/mol"), Result.DeltaEMM);
+    
+    // Warn if internal energies are unrealistically large (indicates structural problems)
+    if (FMath::Abs(Result.EMM_Complex) > 50000.0f || FMath::Abs(Result.EMM_Receptor) > 50000.0f)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("MMGBSA: Very large internal MM energies detected (Complex=%.0f, Receptor=%.0f) - structure may need energy minimization"), 
+            Result.EMM_Complex, Result.EMM_Receptor);
+    }
     
     // Calculate GB solvation energies
     // Use a more numerically stable approach: compute receptor-ligand GB interactions
@@ -364,7 +386,7 @@ FBindingAffinityResult AMMGBSA::CalculateBindingAffinity(const FString& LigandKe
     // This partially offsets the favorable receptor-ligand GB interactions
     // DeltaSASA is negative (buried surface), so we need to convert to positive penalty
     // Desolvation penalty for electrostatic solvation is smaller than for nonpolar
-    // Use a conservative estimate: ~0.005 kcal/mol per Ų of buried surface
+    // Use a conservative estimate: ~0.005 kcal/mol per Å² of buried surface
     float BuriedSASA = -(Result.SA_Complex - Result.SA_Receptor - Result.SA_Ligand); // Make positive
     float DesolvationPenalty = BuriedSASA * 0.005f; // Positive penalty (conservative estimate)
     
@@ -401,13 +423,42 @@ FBindingAffinityResult AMMGBSA::CalculateBindingAffinity(const FString& LigandKe
     // Total binding free energy
     Result.DeltaG_Binding = Result.DeltaEMM + Result.DeltaGGB + Result.DeltaGSA;
     
+    // Sanity check: if ΔEMM is unreasonably large (> 100 kcal/mol), it's likely due to severe overlaps
+    // In these cases, the calculation is unreliable and should be flagged
+    if (FMath::Abs(Result.DeltaEMM) > 100.0f && !Result.bHasSevereOverlap)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("MMGBSA: ΔEMM magnitude (%.1f) is very large but no severe overlaps detected - possible numerical instability"), Result.DeltaEMM);
+    }
+    
+    // Clamp final ΔG to reasonable range (-50 to +50 kcal/mol)
+    // Values outside this range are almost certainly numerical artifacts
+    const float MaxDeltaG = 50.0f;
+    if (!FMath::IsFinite(Result.DeltaG_Binding))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("MMGBSA: ΔG computed as non-finite; marking result invalid"));
+        Result.DeltaG_Binding = 0.0f;
+        Result.bIsValid = false;
+    }
+    else if (FMath::Abs(Result.DeltaG_Binding) > MaxDeltaG)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("MMGBSA: ΔG magnitude (%.1f) exceeds reasonable range (±%.0f kcal/mol); clamping and marking uncertain"), 
+            Result.DeltaG_Binding, MaxDeltaG);
+        Result.DeltaG_Binding = FMath::Clamp(Result.DeltaG_Binding, -MaxDeltaG, MaxDeltaG);
+        // Don't mark invalid, but user should be aware this is clamped
+    }
+    
     // Convert to Ki
     Result.Ki_uM = DeltaGToKi(Result.DeltaG_Binding);
     Result.AffinityClass = ClassifyAffinity(Result.DeltaG_Binding);
     
     // Log breakdown of components for diagnostics
     UE_LOG(LogTemp, Log, TEXT("MMGBSA: %s | ΔG = %.2f kcal/mol | Ki = %.2f µM | %s"), *LigandKey, Result.DeltaG_Binding, Result.Ki_uM, *Result.AffinityClass);
-    UE_LOG(LogTemp, Log, TEXT("MMGBSA: Components for %s - ΔEMM=%.3f ΔGB=%.3f ΔSA=%.3f (EMM_C=%.3f EMR=%.3f EML=%.3f)"), *LigandKey, Result.DeltaEMM, Result.DeltaGGB, Result.DeltaGSA, Result.EMM_Complex, Result.EMM_Receptor, Result.EMM_Ligand);
+    UE_LOG(LogTemp, Log, TEXT("MMGBSA: Energy breakdown for %s:"), *LigandKey);
+    UE_LOG(LogTemp, Log, TEXT("  ΔEMM (receptor-ligand) = %.3f kcal/mol"), Result.DeltaEMM);
+    UE_LOG(LogTemp, Log, TEXT("  ΔGGB (solvation)       = %.3f kcal/mol"), Result.DeltaGGB);
+    UE_LOG(LogTemp, Log, TEXT("  ΔGSA (surface area)    = %.3f kcal/mol"), Result.DeltaGSA);
+    UE_LOG(LogTemp, Verbose, TEXT("  Internal energies (diagnostic): EMM_Complex=%.1f EMM_Receptor=%.1f EMM_Ligand=%.1f"), 
+        Result.EMM_Complex, Result.EMM_Receptor, Result.EMM_Ligand);
 
     // Warn on unusually large energy components which likely indicate numeric instability or atom overlap
     const float WarnThreshold = 1000.0f; // kcal/mol
@@ -484,7 +535,21 @@ float AMMGBSA::CalculateMMEnergyPair(const TArray<FMMAtom>& Atoms1, const TArray
         {
             const FMMAtom& B = Atoms2[j];
             float Dist = FVector::Dist(A.Position, B.Position) / 100.0f; // Å
-            if (Dist < 0.5f) Dist = 0.5f;
+            
+            // Increase minimum distance to 1.0 Å to avoid extreme forces from severe overlaps
+            // Distances below this are unphysical and indicate structural problems
+            if (Dist < 1.0f)
+            {
+                Dist = 1.0f;
+                // Log first few instances
+                static int32 MinDistWarnings = 0;
+                if (MinDistWarnings < 5)
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("MMGBSA: Severe atomic overlap detected (dist < 1.0 Å), clamping to minimum distance"));
+                    MinDistWarnings++;
+                }
+            }
+            
             if (Dist > CutoffA) continue; // Only consider close receptor-ligand pairs
 
             // Distance-dependent dielectric to attenuate electrostatics with separation
@@ -514,8 +579,9 @@ float AMMGBSA::CalculateMMEnergyPair(const TArray<FMMAtom>& Atoms1, const TArray
             float DistScale = 1.0f;
             if (Dist < 2.0f)
             {
-                // Scale down very close interactions (likely overlaps) - less aggressive to allow favorable close contacts
-                DistScale = FMath::Lerp(0.5f, 1.0f, FMath::Clamp((Dist - 0.5f) / 1.5f, 0.0f, 1.0f));
+                // For very close contacts, apply stronger damping to avoid numerical explosion
+                // Contacts this close (< 2 Å) are likely artifacts from unminimized crystal structures
+                DistScale = FMath::Lerp(0.1f, 1.0f, FMath::Clamp((Dist - 0.5f) / 1.5f, 0.0f, 1.0f));
             }
             else if (Dist > 4.0f)
             {
@@ -832,9 +898,9 @@ void AMMGBSA::CalculateSASA(TArray<FMMAtom>& Atoms)
             if (bAccessible) AccessiblePoints++;
         }
         
-        // SASA = 4πr² * (accessible fraction), convert to ų
+        // SASA = 4πr² * (accessible fraction), convert to Å³
         float Fraction = (float)AccessiblePoints / NumSpherePoints;
-        Atom.SASA = 4.0f * PI * ExtendedRadius * ExtendedRadius * Fraction / 10000.0f; // To ų
+        Atom.SASA = 4.0f * PI * ExtendedRadius * ExtendedRadius * Fraction / 10000.0f; // To Å³
     }
 }
 
