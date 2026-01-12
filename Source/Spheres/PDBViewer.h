@@ -25,9 +25,11 @@ struct FResidueInfo
     GENERATED_BODY()
     FString RecordType, Chain, ResidueName, ResidueSeq;
     TArray<UStaticMeshComponent*> AtomMeshes, BondMeshes;
-    // Store raw atom positions and element symbols for receptor atoms (ATOM records)
+    // Store UNSCALED raw atom positions and element symbols
     TArray<FVector> AtomPositions;
     TArray<FString> AtomElements;
+    TArray<TPair<int32, int32>> BondPairs;  // Bond connectivity
+    TArray<int32> BondOrders;                // Bond orders
     bool bIsVisible = true;
 };
 
@@ -38,7 +40,7 @@ struct FLigandInfo
     FString LigandName;
     TArray<UStaticMeshComponent*> AtomMeshes, BondMeshes;
     TArray<FString> AtomElements; // Element symbol per atom (aligned with AtomMeshes)
-    TArray<FVector> AtomPositions; // Store positions for hydrogen generation
+    TArray<FVector> AtomPositions; // Store UNSCALED positions for accurate calculations
     TArray<TPair<int32, int32>> BondPairs; // Store bond connectivity
     TArray<int32> BondOrders; // Bond order for each bond (aligned with BondPairs)
     bool bIsVisible = false;
@@ -214,7 +216,8 @@ protected:
     void ParseMMCIF(const FString& FileContent);
     void ParseSDF(const FString& FileContent);
     void CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FVector>>& ResidueAtoms, const TMap<FString, FResidueMetadata>& Metadata);
-    void DrawProteinBonds(const TMap<FString, FVector>& AtomPositions, FResidueInfo* ResInfo);
+    void DrawProteinBondsAndConnectivity(const TMap<FString, FVector>& AtomPositions, FResidueInfo* ResInfo);
+    void GenerateHydrogensForResidue(FResidueInfo* ResInfo);
     void FetchLigandBondsForHETATM(const FString& Key, const FString& Name, const TMap<FString, FVector>& Pos, FLigandInfo* LigInfo);
     void ParseLigandCIFForLigand(const FString& FileContent, const TMap<FString, FVector>& AtomPositions, FLigandInfo* LigInfo);
     FString NormalizeAtomID(const FString& In) const;
