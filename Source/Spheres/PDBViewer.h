@@ -28,8 +28,9 @@ struct FResidueInfo
     // Store UNSCALED raw atom positions and element symbols
     TArray<FVector> AtomPositions;
     TArray<FString> AtomElements;
-    TArray<TPair<int32, int32>> BondPairs;  // Bond connectivity
-    TArray<int32> BondOrders;                // Bond orders
+    TArray<FString> AtomNames;      // Full atom names like "CA", "CB", "N", etc.
+    TArray<TPair<int32, int32>> BondPairs;
+    TArray<int32> BondOrders;
     bool bIsVisible = true;
 };
 
@@ -41,6 +42,7 @@ struct FLigandInfo
     TArray<UStaticMeshComponent*> AtomMeshes, BondMeshes;
     TArray<FString> AtomElements; // Element symbol per atom (aligned with AtomMeshes)
     TArray<FVector> AtomPositions; // Store UNSCALED positions for accurate calculations
+    TArray<FString> AtomNames;      // Full atom names
     TArray<TPair<int32, int32>> BondPairs; // Store bond connectivity
     TArray<int32> BondOrders; // Bond order for each bond (aligned with BondPairs)
     bool bIsVisible = false;
@@ -220,6 +222,12 @@ protected:
     void GenerateHydrogensForResidue(FResidueInfo* ResInfo);
     void FetchLigandBondsForHETATM(const FString& Key, const FString& Name, const TMap<FString, FVector>& Pos, FLigandInfo* LigInfo);
     void ParseLigandCIFForLigand(const FString& FileContent, const TMap<FString, FVector>& AtomPositions, FLigandInfo* LigInfo);
+    
+    // New functions for mmCIF bond parsing
+    void FetchStructureBondsFromCIF(const FString& StructureID);
+    void ParseStructureBondsFromCIF(const FString& Content);
+    void ApplyBondsToResidues(const TMap<FString, TArray<TPair<TPair<FString, FString>, int32>>>& ComponentBonds);
+    
     FString NormalizeAtomID(const FString& In) const;
     int32 ParseBondOrder(const FString& OrderStr) const;
     void DrawSphere(float X, float Y, float Z, const FLinearColor& Color, USceneComponent* Parent, TArray<UStaticMeshComponent*>& OutArray);
