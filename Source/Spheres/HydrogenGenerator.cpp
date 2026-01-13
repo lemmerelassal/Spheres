@@ -53,19 +53,32 @@ TArray<FVector> FHydrogenGenerator::GenerateHydrogenPositions(
         // Two hydrogens - geometry depends on element and existing bonds
         if (ExistingBondDirs.Num() == 2)
         {
-            // Nitrogen with 2 existing bonds + 2 H = tetrahedral (sp3, like NH4+)
-            // But most common is NH2 with 1 bond = trigonal/bent (sp2/sp3)
-            if (Element == TEXT("N"))
+            // Two existing bonds + 2 hydrogens (rare case)
+            if (Element == TEXT("O") || Element == TEXT("S"))
             {
-                // NH2 group bonded to one other atom - use trigonal planar (bent)
-                // The two hydrogens form ~107° angle (slightly less than tetrahedral)
+                // Water-like with 2 other bonds - use tetrahedral bent
                 FVector SumDir = (ExistingBondDirs[0] + ExistingBondDirs[1]).GetSafeNormal();
                 FVector Perp = FVector::CrossProduct(ExistingBondDirs[0], ExistingBondDirs[1]).GetSafeNormal();
                 
                 if (Perp.SizeSquared() < 0.01f)
                     Perp = FVector::UpVector;
                 
-                // For nitrogen, use ~107° angle (between tetrahedral 109.5° and trigonal 120°)
+                // Use ~104.5° for oxygen (half angle = 52.25°)
+                float HalfAngle = (Element == TEXT("O")) ? 52.25f : 60.0f;
+                FVector Base = -SumDir.GetSafeNormal();
+                
+                HPositions.Add(ParentPos + (Base.RotateAngleAxis(HalfAngle, Perp)).GetSafeNormal() * BondLength);
+                HPositions.Add(ParentPos + (Base.RotateAngleAxis(-HalfAngle, Perp)).GetSafeNormal() * BondLength);
+            }
+            else if (Element == TEXT("N"))
+            {
+                // NH2 with 2 existing bonds - use bent geometry (~107°)
+                FVector SumDir = (ExistingBondDirs[0] + ExistingBondDirs[1]).GetSafeNormal();
+                FVector Perp = FVector::CrossProduct(ExistingBondDirs[0], ExistingBondDirs[1]).GetSafeNormal();
+                
+                if (Perp.SizeSquared() < 0.01f)
+                    Perp = FVector::UpVector;
+                
                 FVector Base = -SumDir.GetSafeNormal();
                 
                 HPositions.Add(ParentPos + (Base.RotateAngleAxis(53.5f, Perp)).GetSafeNormal() * BondLength);
@@ -73,7 +86,7 @@ TArray<FVector> FHydrogenGenerator::GenerateHydrogenPositions(
             }
             else
             {
-                // Oxygen or other elements - use tetrahedral (bent)
+                // Carbon or other - tetrahedral
                 FVector SumDir = (ExistingBondDirs[0] + ExistingBondDirs[1]).GetSafeNormal();
                 FVector Perp = FVector::CrossProduct(ExistingBondDirs[0], ExistingBondDirs[1]).GetSafeNormal();
                 
@@ -88,12 +101,36 @@ TArray<FVector> FHydrogenGenerator::GenerateHydrogenPositions(
         }
         else if (ExistingBondDirs.Num() == 1)
         {
-            // One existing bond + 2 hydrogens
-            if (Element == TEXT("N"))
+            // One existing bond + 2 hydrogens (most common case)
+            FVector V = ExistingBondDirs[0];
+            FVector Perp = GetPerpendicularVector(V);
+            
+            if (Element == TEXT("O") || Element == TEXT("S"))
+            {
+                // Water-like (OH2, SH2) - use bent geometry with proper angle
+                // For water: H-O-H angle is ~104.5°
+                // We need to place hydrogens at 104.5° from each other
+                
+                FVector Normal = FVector::CrossProduct(V, Perp).GetSafeNormal();
+                
+                // The angle from the existing bond direction to each H
+                // If H-O-H is 104.5°, and we're placing them symmetrically,
+                // each H makes an angle with the opposite of the existing bond
+                float HalfHOHAngle = FMath::DegreesToRadians((Element == TEXT("O")) ? 104.5f / 2.0f : 92.0f / 2.0f);
+                
+                // Base direction opposite to existing bond
+                FVector Base = -V;
+                
+                // Create rotation quaternions
+                FQuat Q1 = FQuat(Normal, HalfHOHAngle);
+                FQuat Q2 = FQuat(Normal, -HalfHOHAngle);
+                
+                HPositions.Add(ParentPos + Q1.RotateVector(Base) * BondLength);
+                HPositions.Add(ParentPos + Q2.RotateVector(Base) * BondLength);
+            }
+            else if (Element == TEXT("N"))
             {
                 // NH2 group - use trigonal planar geometry (120° angles)
-                FVector V = ExistingBondDirs[0];
-                FVector Perp = GetPerpendicularVector(V);
                 FVector Normal = FVector::CrossProduct(V, Perp).GetSafeNormal();
                 
                 // Two hydrogens at 120 degrees from the existing bond
@@ -106,17 +143,16 @@ TArray<FVector> FHydrogenGenerator::GenerateHydrogenPositions(
             }
             else
             {
-                // Water-like (O, S) - use bent tetrahedral (~104.5° for water)
-                FVector V = ExistingBondDirs[0];
-                FVector Perp = GetPerpendicularVector(V);
+                // Carbon or other - use tetrahedral arrangement
+                // This would be something like CH2 in a ring
                 FVector Normal = FVector::CrossProduct(V, Perp).GetSafeNormal();
                 
-                // ~104.5° angle for water
-                float HalfAngle = FMath::DegreesToRadians(104.5f / 2.0f);
-                FQuat Q1 = FQuat(Normal, HalfAngle);
-                FQuat Q2 = FQuat(Normal, -HalfAngle);
+                float TetAngle = FMath::DegreesToRadians(109.471f);
+                FVector Base = -V;
                 
-                FVector Base = -V; // Opposite direction
+                FQuat Q1 = FQuat(Normal, TetAngle / 2.0f);
+                FQuat Q2 = FQuat(Normal, -TetAngle / 2.0f);
+                
                 HPositions.Add(ParentPos + Q1.RotateVector(Base) * BondLength);
                 HPositions.Add(ParentPos + Q2.RotateVector(Base) * BondLength);
             }

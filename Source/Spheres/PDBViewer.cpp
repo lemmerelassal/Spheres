@@ -76,46 +76,47 @@ void APDBViewer::BeginPlay()
 void APDBViewer::OnLigandsLoadedHandler()
 {
     UE_LOG(LogTemp, Warning, TEXT("===== Ligands Loaded - Updating Hydrogen Visibility ====="));
-    
+
     if (LigandMap.Num() == 0)
     {
         UE_LOG(LogTemp, Warning, TEXT("No ligands in map"));
         return;
     }
-    
+
     DebugPrintLigandInfo();
-    
+
     // Just update hydrogen visibility for ligands
-    for (auto& Pair : LigandMap)
+    for (auto &Pair : LigandMap)
     {
-        if (!Pair.Value) continue;
-        
-        FLigandInfo* Info = Pair.Value;
-        
+        if (!Pair.Value)
+            continue;
+
+        FLigandInfo *Info = Pair.Value;
+
         // Update visibility for hydrogen atoms
         for (int32 i = 0; i < Info->AtomElements.Num(); ++i)
         {
             if (Info->AtomElements[i] == TEXT("H") && Info->AtomMeshes.IsValidIndex(i))
                 Info->AtomMeshes[i]->SetVisibility(bHydrogensVisible && Info->bIsVisible);
         }
-        
+
         // Update visibility for bonds involving hydrogens
         for (int32 i = 0; i < Info->BondPairs.Num(); ++i)
         {
             int32 A1 = Info->BondPairs[i].Key;
             int32 A2 = Info->BondPairs[i].Value;
-            
+
             bool bHasH = (Info->AtomElements.IsValidIndex(A1) && Info->AtomElements[A1] == TEXT("H")) ||
                          (Info->AtomElements.IsValidIndex(A2) && Info->AtomElements[A2] == TEXT("H"));
-            
+
             if (bHasH && Info->BondMeshes.IsValidIndex(i))
                 Info->BondMeshes[i]->SetVisibility(bHydrogensVisible && Info->bIsVisible);
         }
     }
-    
+
     int32 TotalH = GetHydrogenCount();
-    UE_LOG(LogTemp, Warning, TEXT("Total hydrogens: %d (Visible: %s)"), 
-        TotalH, bHydrogensVisible ? TEXT("YES") : TEXT("NO"));
+    UE_LOG(LogTemp, Warning, TEXT("Total hydrogens: %d (Visible: %s)"),
+           TotalH, bHydrogensVisible ? TEXT("YES") : TEXT("NO"));
 }
 
 void APDBViewer::FetchAndDisplayStructure(const FString &ID)
@@ -170,7 +171,7 @@ void APDBViewer::ParsePDB(const FString &Content)
                                       *Chain);
 
         FString AtomName = L.Mid(12, 4).TrimStartAndEnd();
-        
+
         // Store UNSCALED coordinates with atom name as key
         ResAtoms.FindOrAdd(Key).Add(AtomName,
                                     FVector(FCString::Atof(*L.Mid(30, 8)),
@@ -188,7 +189,7 @@ void APDBViewer::ParsePDB(const FString &Content)
     }
 
     CreateResiduesFromAtomData(ResAtoms, ResMeta);
-    
+
     // Fetch bonds from the structure's mmCIF file
     if (!CurrentStructureID.IsEmpty())
     {
@@ -272,7 +273,7 @@ void APDBViewer::ParseMMCIF(const FString &Content)
         FString Key = FString::Printf(TEXT("%s_%s_%s"), *R[RI], *Seq, *Chain);
 
         FString AtomName = R[AI];
-        
+
         ResAtoms.FindOrAdd(Key).Add(AtomName,
                                     FVector(FCString::Atof(*R[XI]),
                                             FCString::Atof(*R[YI]),
@@ -289,7 +290,7 @@ void APDBViewer::ParseMMCIF(const FString &Content)
     }
 
     CreateResiduesFromAtomData(ResAtoms, ResMeta);
-    
+
     // Fetch bonds from the structure's mmCIF file (or parse from this file if it's the same)
     if (!CurrentStructureID.IsEmpty())
     {
@@ -302,15 +303,14 @@ void APDBViewer::ParseMMCIF(const FString &Content)
     }
 }
 
-
-void APDBViewer::FetchStructureBondsFromCIF(const FString& StructureID)
+void APDBViewer::FetchStructureBondsFromCIF(const FString &StructureID)
 {
     FString URL = FString::Printf(TEXT("https://files.rcsb.org/download/%s.cif"), *StructureID);
-    
+
     UE_LOG(LogTemp, Log, TEXT("Fetching bond information from mmCIF: %s"), *URL);
-    
-    FetchFileAsync(URL, [this](bool bOK, const FString& Content)
-    {
+
+    FetchFileAsync(URL, [this](bool bOK, const FString &Content)
+                   {
         if (bOK)
         {
             UE_LOG(LogTemp, Log, TEXT("Successfully fetched mmCIF bond data"));
@@ -320,23 +320,22 @@ void APDBViewer::FetchStructureBondsFromCIF(const FString& StructureID)
         {
             UE_LOG(LogTemp, Warning, TEXT("Failed to fetch mmCIF bond data"));
             OnResiduesLoaded.Broadcast();
-        }
-    });
+        } });
 }
 
-void APDBViewer::ParseStructureBondsFromCIF(const FString& Content)
+void APDBViewer::ParseStructureBondsFromCIF(const FString &Content)
 {
     TArray<FString> Lines;
     Content.ParseIntoArrayLines(Lines);
-    
+
     bool bInChemCompBond = false;
     TArray<FString> BondHeaders;
     int32 CompIdIdx = -1, Atom1Idx = -1, Atom2Idx = -1, OrderIdx = -1;
-    
+
     // Maps to store bonds by component type (residue name like "ALA", "GLY", "ATP", etc.)
     TMap<FString, TArray<TPair<TPair<FString, FString>, int32>>> ComponentBonds;
-    
-    for (const FString& Line : Lines)
+
+    for (const FString &Line : Lines)
     {
         if (Line.StartsWith(TEXT("loop_")))
         {
@@ -345,12 +344,12 @@ void APDBViewer::ParseStructureBondsFromCIF(const FString& Content)
             CompIdIdx = Atom1Idx = Atom2Idx = OrderIdx = -1;
             continue;
         }
-        
+
         if (Line.StartsWith(TEXT("_chem_comp_bond.")))
         {
             bInChemCompBond = true;
             int32 Idx = BondHeaders.Add(Line);
-            
+
             if (Line.Contains(TEXT("comp_id")))
                 CompIdIdx = Idx;
             else if (Line.Contains(TEXT("atom_id_1")))
@@ -359,163 +358,219 @@ void APDBViewer::ParseStructureBondsFromCIF(const FString& Content)
                 Atom2Idx = Idx;
             else if (Line.Contains(TEXT("value_order")))
                 OrderIdx = Idx;
-            
+
             continue;
         }
-        
+
         if (bInChemCompBond && !Line.StartsWith(TEXT("_")) && !Line.StartsWith(TEXT("#")) && !Line.IsEmpty())
         {
             if (CompIdIdx < 0 || Atom1Idx < 0 || Atom2Idx < 0)
                 continue;
-            
+
             TArray<FString> Tokens;
             Line.ParseIntoArrayWS(Tokens);
-            
+
             if (Tokens.Num() <= FMath::Max3(CompIdIdx, Atom1Idx, Atom2Idx))
                 continue;
-            
+
             FString CompId = Tokens[CompIdIdx].TrimStartAndEnd();
             FString Atom1 = Tokens[Atom1Idx].TrimStartAndEnd();
             FString Atom2 = Tokens[Atom2Idx].TrimStartAndEnd();
-            int32 Order = (OrderIdx >= 0 && Tokens.IsValidIndex(OrderIdx)) 
-                ? ParseBondOrder(Tokens[OrderIdx]) : 1;
-            
+            int32 Order = (OrderIdx >= 0 && Tokens.IsValidIndex(OrderIdx))
+                              ? ParseBondOrder(Tokens[OrderIdx])
+                              : 1;
+
             // Store bond for this component type
             ComponentBonds.FindOrAdd(CompId).Add(TPair<TPair<FString, FString>, int32>(
                 TPair<FString, FString>(Atom1, Atom2), Order));
         }
     }
-    
+
     UE_LOG(LogTemp, Log, TEXT("Parsed bond data for %d component types from mmCIF"), ComponentBonds.Num());
-    
+
     // Apply bonds to all residues and ligands
     ApplyBondsToResidues(ComponentBonds);
-    
+
     // Now broadcast events after bonds are applied
     OnResiduesLoaded.Broadcast();
     OnLigandsLoaded.Broadcast();
 }
 
-void APDBViewer::ApplyBondsToResidues(const TMap<FString, TArray<TPair<TPair<FString, FString>, int32>>>& ComponentBonds)
+void APDBViewer::ApplyBondsToResidues(const TMap<FString, TArray<TPair<TPair<FString, FString>, int32>>> &ComponentBonds)
 {
     // Apply to regular residues (ATOM records)
-    for (auto& Pair : ResidueMap)
+    for (auto &Pair : ResidueMap)
     {
-        FResidueInfo* ResInfo = Pair.Value;
-        if (!ResInfo) continue;
-        
-        const TArray<TPair<TPair<FString, FString>, int32>>* BondData = ComponentBonds.Find(ResInfo->ResidueName);
+        FResidueInfo *ResInfo = Pair.Value;
+        if (!ResInfo)
+            continue;
+
+        const TArray<TPair<TPair<FString, FString>, int32>> *BondData = ComponentBonds.Find(ResInfo->ResidueName);
         if (!BondData)
         {
             UE_LOG(LogTemp, Warning, TEXT("No bond data found for residue: %s"), *ResInfo->ResidueName);
             continue;
         }
-        
+
         // Create atom name to index map
         TMap<FString, int32> AtomNameToIdx;
         for (int32 i = 0; i < ResInfo->AtomNames.Num(); ++i)
         {
             AtomNameToIdx.Add(ResInfo->AtomNames[i], i);
         }
-        
-        UE_LOG(LogTemp, Log, TEXT("Applying %d bonds to residue %s %s"), 
-            BondData->Num(), *ResInfo->ResidueName, *ResInfo->ResidueSeq);
-        
+
+        UE_LOG(LogTemp, Log, TEXT("Applying %d bonds to residue %s %s"),
+               BondData->Num(), *ResInfo->ResidueName, *ResInfo->ResidueSeq);
+
         // Apply bonds
-        for (const auto& BondInfo : *BondData)
+        for (const auto &BondInfo : *BondData)
         {
-            const FString& Atom1Name = BondInfo.Key.Key;
-            const FString& Atom2Name = BondInfo.Key.Value;
+            const FString &Atom1Name = BondInfo.Key.Key;
+            const FString &Atom2Name = BondInfo.Key.Value;
             int32 Order = BondInfo.Value;
-            
-            const int32* Idx1Ptr = AtomNameToIdx.Find(Atom1Name);
-            const int32* Idx2Ptr = AtomNameToIdx.Find(Atom2Name);
-            
+
+            const int32 *Idx1Ptr = AtomNameToIdx.Find(Atom1Name);
+            const int32 *Idx2Ptr = AtomNameToIdx.Find(Atom2Name);
+
             if (Idx1Ptr && Idx2Ptr)
             {
                 int32 Idx1 = *Idx1Ptr;
                 int32 Idx2 = *Idx2Ptr;
-                
+
                 // Store bond connectivity
                 ResInfo->BondPairs.Add(TPair<int32, int32>(Idx1, Idx2));
                 ResInfo->BondOrders.Add(Order);
-                
+
                 // Draw the bond
                 FVector ScaledPos1 = ResInfo->AtomPositions[Idx1] * PDB::SCALE;
                 FVector ScaledPos2 = ResInfo->AtomPositions[Idx2] * PDB::SCALE;
-                DrawBond(ScaledPos1, ScaledPos2, Order, 
-                        ResInfo->AtomElements[Idx1], ResInfo->AtomElements[Idx2], 
-                        GetRootComponent(), ResInfo->BondMeshes);
+                DrawBond(ScaledPos1, ScaledPos2, Order,
+                         ResInfo->AtomElements[Idx1], ResInfo->AtomElements[Idx2],
+                         GetRootComponent(), ResInfo->BondMeshes);
             }
         }
-        
+
         // After bonds are added, generate hydrogens
         if (bAutoGenerateHydrogens && ResInfo->BondPairs.Num() > 0)
         {
             GenerateHydrogensForResidue(ResInfo);
         }
     }
-    
+
     // Apply to ligands (HETATM records)
-    for (auto& Pair : LigandMap)
+    for (auto &Pair : LigandMap)
     {
-        FLigandInfo* LigInfo = Pair.Value;
-        if (!LigInfo) continue;
-        
+        FLigandInfo *LigInfo = Pair.Value;
+        if (!LigInfo)
+            continue;
+
         // Extract the residue name from the ligand key
         FString ResName = LigInfo->LigandName;
         int32 DashPos;
         if (ResName.FindChar('-', DashPos))
             ResName = ResName.Left(DashPos);
-        
-        const TArray<TPair<TPair<FString, FString>, int32>>* BondData = ComponentBonds.Find(ResName);
+
+        const TArray<TPair<TPair<FString, FString>, int32>> *BondData = ComponentBonds.Find(ResName);
         if (!BondData)
         {
-            UE_LOG(LogTemp, Warning, TEXT("No bond data found for ligand: %s (ResName: %s)"), 
-                *LigInfo->LigandName, *ResName);
+            UE_LOG(LogTemp, Warning, TEXT("No bond data found for ligand: %s (ResName: %s)"),
+                   *LigInfo->LigandName, *ResName);
             continue;
         }
-        
+
         // Create atom name to index map
         TMap<FString, int32> AtomNameToIdx;
         for (int32 i = 0; i < LigInfo->AtomNames.Num(); ++i)
         {
             AtomNameToIdx.Add(LigInfo->AtomNames[i], i);
         }
-        
-        UE_LOG(LogTemp, Log, TEXT("Applying %d bonds to ligand %s"), 
-            BondData->Num(), *LigInfo->LigandName);
-        
+
+        UE_LOG(LogTemp, Log, TEXT("Applying %d bonds to ligand %s"),
+               BondData->Num(), *LigInfo->LigandName);
+
         // Apply bonds
-        for (const auto& BondInfo : *BondData)
+        for (const auto &BondInfo : *BondData)
         {
-            const FString& Atom1Name = BondInfo.Key.Key;
-            const FString& Atom2Name = BondInfo.Key.Value;
+            const FString &Atom1Name = BondInfo.Key.Key;
+            const FString &Atom2Name = BondInfo.Key.Value;
             int32 Order = BondInfo.Value;
-            
-            const int32* Idx1Ptr = AtomNameToIdx.Find(Atom1Name);
-            const int32* Idx2Ptr = AtomNameToIdx.Find(Atom2Name);
-            
+
+            const int32 *Idx1Ptr = AtomNameToIdx.Find(Atom1Name);
+            const int32 *Idx2Ptr = AtomNameToIdx.Find(Atom2Name);
+
             if (Idx1Ptr && Idx2Ptr)
             {
                 int32 Idx1 = *Idx1Ptr;
                 int32 Idx2 = *Idx2Ptr;
-                
+
                 // Store bond connectivity
                 LigInfo->BondPairs.Add(TPair<int32, int32>(Idx1, Idx2));
                 LigInfo->BondOrders.Add(Order);
-                
+
                 // Draw the bond
                 FVector ScaledPos1 = LigInfo->AtomPositions[Idx1] * PDB::SCALE;
                 FVector ScaledPos2 = LigInfo->AtomPositions[Idx2] * PDB::SCALE;
-                DrawBond(ScaledPos1, ScaledPos2, Order, 
-                        LigInfo->AtomElements[Idx1], LigInfo->AtomElements[Idx2], 
-                        GetRootComponent(), LigInfo->BondMeshes);
-                
+                DrawBond(ScaledPos1, ScaledPos2, Order,
+                         LigInfo->AtomElements[Idx1], LigInfo->AtomElements[Idx2],
+                         GetRootComponent(), LigInfo->BondMeshes);
+
                 if (LigInfo->BondMeshes.Num() > 0)
                 {
                     LigInfo->BondMeshes.Last()->SetVisibility(LigInfo->bIsVisible);
                 }
+            }
+        }
+
+        // After bonds are added, generate hydrogens for ligands too!
+        if (bAutoGenerateHydrogens && LigInfo->BondPairs.Num() > 0)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Generating hydrogens for ligand: %s"), *LigInfo->LigandName);
+
+            // Skip single atoms (water, ions)
+            if (LigInfo->AtomPositions.Num() <= 1)
+            {
+                UE_LOG(LogTemp, Log, TEXT("Skipping %s (single atom)"), *LigInfo->LigandName);
+                continue;
+            }
+
+            // Check if hydrogens already exist
+            bool bHasHydrogens = LigInfo->AtomElements.Contains(TEXT("H"));
+            if (bHasHydrogens)
+            {
+                UE_LOG(LogTemp, Log, TEXT("Ligand %s already has hydrogens"), *LigInfo->LigandName);
+                continue;
+            }
+
+            TArray<TPair<FVector, int32>> Hydrogens = FHydrogenGenerator::GenerateHydrogens(
+                LigInfo->AtomPositions, LigInfo->AtomElements, LigInfo->BondPairs, LigInfo->BondOrders);
+
+            UE_LOG(LogTemp, Warning, TEXT("  Generated %d hydrogens for ligand"), Hydrogens.Num());
+
+            for (const auto &HPair : Hydrogens)
+            {
+                int32 ParentIdx = HPair.Value;
+
+                // Store UNSCALED hydrogen position
+                int32 HIdx = LigInfo->AtomPositions.Add(HPair.Key);
+                LigInfo->AtomElements.Add(TEXT("H"));
+                LigInfo->AtomNames.Add(FString::Printf(TEXT("H%d"), HIdx));
+
+                // Apply scaling only when drawing
+                FVector ScaledHPos = HPair.Key * PDB::SCALE;
+                DrawSphere(ScaledHPos.X, ScaledHPos.Y, ScaledHPos.Z, FLinearColor::White,
+                           GetRootComponent(), LigInfo->AtomMeshes);
+                LigInfo->AtomMeshes.Last()->SetWorldScale3D(FVector(0.3f));
+                LigInfo->AtomMeshes.Last()->SetVisibility(bHydrogensVisible && LigInfo->bIsVisible);
+
+                // Scale both positions for drawing the bond
+                FVector ScaledParent = LigInfo->AtomPositions[ParentIdx] * PDB::SCALE;
+                DrawBond(ScaledParent, ScaledHPos, 1,
+                         LigInfo->AtomElements[ParentIdx], TEXT("H"),
+                         GetRootComponent(), LigInfo->BondMeshes);
+                LigInfo->BondMeshes.Last()->SetVisibility(bHydrogensVisible && LigInfo->bIsVisible);
+
+                LigInfo->BondPairs.Add(TPair<int32, int32>(ParentIdx, HIdx));
+                LigInfo->BondOrders.Add(1);
             }
         }
     }
@@ -748,7 +803,7 @@ void APDBViewer::CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FV
                 FString Element = AtomName.TrimStartAndEnd().Left(1);
                 if (AtomName.Len() > 1 && FChar::IsLower(AtomName[1]))
                     Element = AtomName.Left(2);
-                    
+
                 Info->AtomPositions.Add(A.Value);
                 Info->AtomElements.Add(Element);
                 Info->AtomNames.Add(AtomName);
@@ -795,6 +850,7 @@ void APDBViewer::GenerateHydrogensForResidue(FResidueInfo* ResInfo)
         // Store UNSCALED hydrogen position
         int32 HIdx = ResInfo->AtomPositions.Add(HPair.Key);
         ResInfo->AtomElements.Add(TEXT("H"));
+        ResInfo->AtomNames.Add(FString::Printf(TEXT("H%d"), HIdx)); // Add atom name
         
         // Apply scaling only when drawing
         FVector ScaledHPos = HPair.Key * PDB::SCALE;
@@ -824,7 +880,7 @@ void APDBViewer::DrawProteinBondsAndConnectivity(const TMap<FString, FVector> &A
 
     TArray<TPair<FString, FVector>> Atoms;
     TMap<FString, int32> AtomNameToIndex;
-    
+
     for (const auto &Pair : AtomPositions)
     {
         int32 Idx = Atoms.Add(TPair<FString, FVector>(Pair.Key, Pair.Value));
@@ -859,7 +915,6 @@ void APDBViewer::DrawProteinBondsAndConnectivity(const TMap<FString, FVector> &A
         }
     }
 }
-
 
 void APDBViewer::ParseLigandCIFForLigand(const FString &Content, const TMap<FString, FVector> &Pos, FLigandInfo *Info)
 {
@@ -976,7 +1031,7 @@ void APDBViewer::ParseLigandCIFForLigand(const FString &Content, const TMap<FStr
         else if (bLoop && L.StartsWith(TEXT("data_")))
             break;
     }
-    
+
     // IMPORTANT: Broadcast after bonds are loaded so hydrogens can be generated
     OnLigandsLoaded.Broadcast();
 }
@@ -1685,112 +1740,118 @@ void APDBViewer::DebugPrintLigandInfo()
 
 void APDBViewer::AddExplicitHydrogens()
 {
-    if (bHydrogensVisible) return;
-    
+    if (bHydrogensVisible)
+        return;
+
     // Show hydrogens for ligands
-    for (auto& Pair : LigandMap)
+    for (auto &Pair : LigandMap)
     {
-        if (!Pair.Value) continue;
-        
+        if (!Pair.Value)
+            continue;
+
         for (int32 i = 0; i < Pair.Value->AtomElements.Num(); ++i)
         {
             if (Pair.Value->AtomElements[i] == TEXT("H") && Pair.Value->AtomMeshes.IsValidIndex(i))
                 Pair.Value->AtomMeshes[i]->SetVisibility(Pair.Value->bIsVisible);
         }
-        
+
         for (int32 i = 0; i < Pair.Value->BondPairs.Num(); ++i)
         {
             int32 A1 = Pair.Value->BondPairs[i].Key;
             int32 A2 = Pair.Value->BondPairs[i].Value;
-            
+
             bool bHasBond = (Pair.Value->AtomElements.IsValidIndex(A1) && Pair.Value->AtomElements[A1] == TEXT("H")) ||
-                           (Pair.Value->AtomElements.IsValidIndex(A2) && Pair.Value->AtomElements[A2] == TEXT("H"));
-            
+                            (Pair.Value->AtomElements.IsValidIndex(A2) && Pair.Value->AtomElements[A2] == TEXT("H"));
+
             if (bHasBond && Pair.Value->BondMeshes.IsValidIndex(i))
                 Pair.Value->BondMeshes[i]->SetVisibility(Pair.Value->bIsVisible);
         }
     }
-    
+
     // Show hydrogens for residues
-    for (auto& Pair : ResidueMap)
+    for (auto &Pair : ResidueMap)
     {
-        if (!Pair.Value) continue;
-        
+        if (!Pair.Value)
+            continue;
+
         for (int32 i = 0; i < Pair.Value->AtomElements.Num(); ++i)
         {
             if (Pair.Value->AtomElements[i] == TEXT("H") && Pair.Value->AtomMeshes.IsValidIndex(i))
                 Pair.Value->AtomMeshes[i]->SetVisibility(Pair.Value->bIsVisible);
         }
-        
+
         for (int32 i = 0; i < Pair.Value->BondPairs.Num(); ++i)
         {
             int32 A1 = Pair.Value->BondPairs[i].Key;
             int32 A2 = Pair.Value->BondPairs[i].Value;
-            
+
             bool bHasBond = (Pair.Value->AtomElements.IsValidIndex(A1) && Pair.Value->AtomElements[A1] == TEXT("H")) ||
-                           (Pair.Value->AtomElements.IsValidIndex(A2) && Pair.Value->AtomElements[A2] == TEXT("H"));
-            
+                            (Pair.Value->AtomElements.IsValidIndex(A2) && Pair.Value->AtomElements[A2] == TEXT("H"));
+
             if (bHasBond && Pair.Value->BondMeshes.IsValidIndex(i))
                 Pair.Value->BondMeshes[i]->SetVisibility(Pair.Value->bIsVisible);
         }
     }
-    
+
     bHydrogensVisible = true;
     UE_LOG(LogTemp, Log, TEXT("Showed %d hydrogens"), GetHydrogenCount());
 }
 
 void APDBViewer::RemoveExplicitHydrogens()
 {
-    if (!bHydrogensVisible) return;
-    
+    if (!bHydrogensVisible)
+        return;
+
     // Hide hydrogens for ligands
-    for (auto& Pair : LigandMap)
+    for (auto &Pair : LigandMap)
     {
-        if (!Pair.Value) continue;
-        
+        if (!Pair.Value)
+            continue;
+
         for (int32 i = 0; i < Pair.Value->AtomElements.Num(); ++i)
         {
             if (Pair.Value->AtomElements[i] == TEXT("H") && Pair.Value->AtomMeshes.IsValidIndex(i))
                 Pair.Value->AtomMeshes[i]->SetVisibility(false);
         }
-        
+
         for (int32 i = 0; i < Pair.Value->BondPairs.Num(); ++i)
         {
             int32 A1 = Pair.Value->BondPairs[i].Key;
             int32 A2 = Pair.Value->BondPairs[i].Value;
-            
+
             bool bHasBond = (Pair.Value->AtomElements.IsValidIndex(A1) && Pair.Value->AtomElements[A1] == TEXT("H")) ||
-                           (Pair.Value->AtomElements.IsValidIndex(A2) && Pair.Value->AtomElements[A2] == TEXT("H"));
-            
+                            (Pair.Value->AtomElements.IsValidIndex(A2) && Pair.Value->AtomElements[A2] == TEXT("H"));
+
             if (bHasBond && Pair.Value->BondMeshes.IsValidIndex(i))
                 Pair.Value->BondMeshes[i]->SetVisibility(false);
         }
     }
-    
+
     // Hide hydrogens for residues
-    for (auto& Pair : ResidueMap)
+    for (auto &Pair : ResidueMap)
     {
-        if (!Pair.Value) continue;
-        
+        if (!Pair.Value)
+            continue;
+
         for (int32 i = 0; i < Pair.Value->AtomElements.Num(); ++i)
         {
             if (Pair.Value->AtomElements[i] == TEXT("H") && Pair.Value->AtomMeshes.IsValidIndex(i))
                 Pair.Value->AtomMeshes[i]->SetVisibility(false);
         }
-        
+
         for (int32 i = 0; i < Pair.Value->BondPairs.Num(); ++i)
         {
             int32 A1 = Pair.Value->BondPairs[i].Key;
             int32 A2 = Pair.Value->BondPairs[i].Value;
-            
+
             bool bHasBond = (Pair.Value->AtomElements.IsValidIndex(A1) && Pair.Value->AtomElements[A1] == TEXT("H")) ||
-                           (Pair.Value->AtomElements.IsValidIndex(A2) && Pair.Value->AtomElements[A2] == TEXT("H"));
-            
+                            (Pair.Value->AtomElements.IsValidIndex(A2) && Pair.Value->AtomElements[A2] == TEXT("H"));
+
             if (bHasBond && Pair.Value->BondMeshes.IsValidIndex(i))
                 Pair.Value->BondMeshes[i]->SetVisibility(false);
         }
     }
-    
+
     bHydrogensVisible = false;
     UE_LOG(LogTemp, Log, TEXT("Hid %d hydrogens"), GetHydrogenCount());
 }
@@ -1805,19 +1866,21 @@ int32 APDBViewer::AddHydrogensToLigand(FLigandInfo *LigInfo) { return 0; } // De
 int32 APDBViewer::GetHydrogenCount() const
 {
     int32 Count = 0;
-    
+
     // Count ligand hydrogens
-    for (const auto& Pair : LigandMap)
+    for (const auto &Pair : LigandMap)
         if (Pair.Value)
-            for (const FString& Elem : Pair.Value->AtomElements)
-                if (Elem == TEXT("H")) Count++;
-    
+            for (const FString &Elem : Pair.Value->AtomElements)
+                if (Elem == TEXT("H"))
+                    Count++;
+
     // Count residue hydrogens
-    for (const auto& Pair : ResidueMap)
+    for (const auto &Pair : ResidueMap)
         if (Pair.Value)
-            for (const FString& Elem : Pair.Value->AtomElements)
-                if (Elem == TEXT("H")) Count++;
-    
+            for (const FString &Elem : Pair.Value->AtomElements)
+                if (Elem == TEXT("H"))
+                    Count++;
+
     return Count;
 }
 

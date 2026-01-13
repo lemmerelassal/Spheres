@@ -263,7 +263,7 @@ protected:
     bool bUseSoftCoreVDW = true;
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float SoftCoreAlpha = 0.5f; // Å - soft-core smoothing parameter
+    float SoftCoreAlpha = 0.8f; // Å - soft-core smoothing parameter
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
     float MaxPairVDW = 50.0f; // kcal/mol - REDUCED from 100.0 to cap extremes earlier
@@ -284,7 +284,7 @@ protected:
 
     // Charge scaling - REDUCED for crystal structures
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float ChargeScaling = 0.2f; // REDUCED from 0.4 - more realistic for unminimized structures
+    float ChargeScaling = 0.3f; // REDUCED from 0.4 - more realistic for unminimized structures
 
     // Minimum allowed GB radius (Å)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
@@ -296,7 +296,7 @@ protected:
 
     // GB scaling factor - INCREASED for less aggressive scaling
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float GBScale = 0.15f; // INCREASED from 0.03 - less aggressive correction
+    float GBScale = -2.0f; // INCREASED from 0.03 - less aggressive correction
     
     // NEW: Structure validation parameters
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
@@ -306,7 +306,7 @@ protected:
     int32 MaxAllowedOverlaps = 3; // Allow a few minor overlaps before rejecting
     
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    bool bAutoMinimizeOnOverlap = false; // Automatically minimize if overlaps detected
+    bool bAutoMinimizeOnOverlap = true; // Automatically minimize if overlaps detected
 
 private:
     // Track parameter changes to invalidate cache

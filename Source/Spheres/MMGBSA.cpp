@@ -121,7 +121,7 @@ void AMMGBSA::LoadAtomsFromViewer()
                 const FElementData *Data = ElementDatabase.Find(Atom.Element);
                 if (Data)
                 {
-                    Atom.Radius = Data->VDWRadius * 100.0f;
+                    Atom.Radius = Data->VDWRadius;
                     Atom.Charge = Data->TypicalCharge * ChargeScaling; // Apply charge scaling to receptor atoms
                 }
                 else
@@ -135,7 +135,7 @@ void AMMGBSA::LoadAtomsFromViewer()
                     const FElementData *Def = ElementDatabase.Find(Atom.Element);
                     if (Def)
                     {
-                        Atom.Radius = Def->VDWRadius * 100.0f;
+                        Atom.Radius = Def->VDWRadius;
                         Atom.Charge = Def->TypicalCharge * ChargeScaling; // Apply charge scaling to receptor atoms
                     }
                 }
@@ -160,14 +160,13 @@ void AMMGBSA::LoadAtomsFromViewer()
         TArray<FMMAtom> Atoms;
 
         TSet<FString> UnknownElements;
-        for (int32 i = 0; i < LigInfo->AtomMeshes.Num(); ++i)
-        {
-            UStaticMeshComponent *Mesh = LigInfo->AtomMeshes[i];
-            if (!Mesh)
-                continue;
 
+        // FIX: Use unscaled positions from LigInfo->AtomPositions instead of mesh positions
+        for (int32 i = 0; i < LigInfo->AtomPositions.Num(); ++i)
+        {
             FMMAtom Atom;
-            Atom.Position = Mesh->GetComponentLocation();
+            // Use UNSCALED position (Ångströms) to match receptor atoms
+            Atom.Position = LigInfo->AtomPositions[i]; // Convert to UE units consistently
             Atom.bIsReceptor = false;
 
             // Use element information from LigInfo if available
@@ -179,7 +178,7 @@ void AMMGBSA::LoadAtomsFromViewer()
             const FElementData *Data = ElementDatabase.Find(Atom.Element);
             if (Data)
             {
-                Atom.Radius = Data->VDWRadius * 100.0f; // Convert to UE units
+                Atom.Radius = Data->VDWRadius; // Convert to UE units
                 Atom.Charge = Data->TypicalCharge;
             }
             else
@@ -193,7 +192,7 @@ void AMMGBSA::LoadAtomsFromViewer()
                 const FElementData *Def = ElementDatabase.Find(Atom.Element);
                 if (Def)
                 {
-                    Atom.Radius = Def->VDWRadius * 100.0f;
+                    Atom.Radius = Def->VDWRadius;
                     Atom.Charge = Def->TypicalCharge;
                 }
             }
@@ -256,7 +255,7 @@ FBindingAffinityResult AMMGBSA::CalculateBindingAffinity(const FString &LigandKe
         if (bAutoMinimizeOnOverlap)
         {
             UE_LOG(LogTemp, Log, TEXT("MMGBSA: Attempting automatic minimization for %s"), *LigandKey);
-            if (MinimizeStructure(LigandKey, 500, 0.1f))
+            if (MinimizeStructure(LigandKey, 2000, 0.01f))
             {
                 // Reload pointer after minimization (structure was modified in place)
                 LigandPtr = LigandAtoms.Find(LigandKey);
@@ -309,6 +308,36 @@ FBindingAffinityResult AMMGBSA::CalculateBindingAffinity(const FString &LigandKe
 
     UE_LOG(LogTemp, Log, TEXT("MMGBSA: Calculating for %s (%d atoms)"), *LigandKey, Ligand.Num());
 
+    // In CalculateBindingAffinity, after "MMGBSA: Calculating for..."
+    float TotalLigandCharge = 0.0f;
+    float TotalReceptorCharge = 0.0f;
+    int32 LigandPos = 0, LigandNeg = 0;
+    int32 RecPos = 0, RecNeg = 0;
+
+    for (const FMMAtom &A : Ligand)
+    {
+        TotalLigandCharge += A.Charge;
+        if (A.Charge > 0.01f)
+            LigandPos++;
+        if (A.Charge < -0.01f)
+            LigandNeg++;
+    }
+
+    for (const FMMAtom &R : ReceptorAtoms)
+    {
+        TotalReceptorCharge += R.Charge;
+        if (R.Charge > 0.01f)
+            RecPos++;
+        if (R.Charge < -0.01f)
+            RecNeg++;
+    }
+
+    UE_LOG(LogTemp, Error, TEXT("CHARGE ANALYSIS:"));
+    UE_LOG(LogTemp, Error, TEXT("  Ligand: Total=%.3f e (%d positive, %d negative)"),
+           TotalLigandCharge, LigandPos, LigandNeg);
+    UE_LOG(LogTemp, Error, TEXT("  Receptor: Total=%.3f e (%d positive, %d negative)"),
+           TotalReceptorCharge, RecPos, RecNeg);
+
     // Diagnostic: list ligand atoms with element/position/charge/radius
     float TotalAbsCharge = 0.0f;
     UE_LOG(LogTemp, Log, TEXT("MMGBSA: Atoms for %s:"), *LigandKey);
@@ -335,9 +364,9 @@ FBindingAffinityResult AMMGBSA::CalculateBindingAffinity(const FString &LigandKe
         {
             const FMMAtom &L = Ligand[j];
             float DistUE = FVector::Dist(R.Position, L.Position);
-            float DistA = DistUE / 100.0f; // Å
-            float RiA = R.Radius / 100.0f;
-            float RjA = L.Radius / 100.0f;
+            float DistA = DistUE; // Å
+            float RiA = R.Radius;
+            float RjA = L.Radius;
             float SumR = RiA + RjA;
 
             if (DistA < SevereFraction * SumR)
@@ -551,6 +580,14 @@ FBindingAffinityResult AMMGBSA::CalculateBindingAffinity(const FString &LigandKe
     // Broadcast event
     OnAffinityCalculated.Broadcast(Result);
 
+    // Right before "Mark valid and cache result"
+    UE_LOG(LogTemp, Error, TEXT("=== ENERGY BREAKDOWN FOR %s ==="), *LigandKey);
+    UE_LOG(LogTemp, Error, TEXT("ΔE_MM   = %+.3f kcal/mol (should be NEGATIVE -15 to -40)"), Result.DeltaEMM);
+    UE_LOG(LogTemp, Error, TEXT("ΔG_GB   = %+.3f kcal/mol (should be NEGATIVE -5 to -15)"), Result.DeltaGGB);
+    UE_LOG(LogTemp, Error, TEXT("ΔG_SA   = %+.3f kcal/mol (usually small ~-1)"), Result.DeltaGSA);
+    UE_LOG(LogTemp, Error, TEXT("ΔG_BIND = %+.3f kcal/mol (TARGET: -10 to -12)"), Result.DeltaG_Binding);
+    UE_LOG(LogTemp, Error, TEXT("=========================================="));
+
     return Result;
 }
 
@@ -602,7 +639,7 @@ float AMMGBSA::CalculateMMEnergyPair(const TArray<FMMAtom> &Atoms1, const TArray
         for (int32 j = 0; j < Atoms2.Num(); ++j)
         {
             const FMMAtom &B = Atoms2[j];
-            float Dist = FVector::Dist(A.Position, B.Position) / 100.0f; // Å
+            float Dist = FVector::Dist(A.Position, B.Position); // Å
 
             // MODIFIED: More aggressive minimum distance clamping
             if (Dist < 1.5f) // INCREASED from 1.0f
@@ -643,17 +680,17 @@ float AMMGBSA::CalculateMMEnergyPair(const TArray<FMMAtom> &Atoms1, const TArray
             VDW = FMath::Clamp(VDW, -MaxPairVDW, MaxPairVDW);
 
             // MODIFIED: Stronger distance-dependent scaling
-            float DistScale = 1.0f;
-            if (Dist < 3.0f)
-            {
-                DistScale = FMath::Lerp(0.05f, 1.0f, FMath::Clamp((Dist - 0.5f) / 2.5f, 0.0f, 1.0f));
-            }
-            else if (Dist > 5.0f)
-            {
-                DistScale = FMath::Lerp(1.0f, 0.6f, FMath::Clamp((Dist - 5.0f) / (CutoffA - 5.0f), 0.0f, 1.0f));
-            }
+            /*             float DistScale = 1.0f;
+                        if (Dist < 3.0f)
+                        {
+                            DistScale = FMath::Lerp(0.05f, 1.0f, FMath::Clamp((Dist - 0.5f) / 2.5f, 0.0f, 1.0f));
+                        }
+                        else if (Dist > 5.0f)
+                        {
+                            DistScale = FMath::Lerp(1.0f, 0.6f, FMath::Clamp((Dist - 5.0f) / (CutoffA - 5.0f), 0.0f, 1.0f));
+                        } */
 
-            Energy += (Elec + VDW) * DistScale;
+            Energy += (Elec + VDW);
         }
     }
 
@@ -672,7 +709,7 @@ float AMMGBSA::CalculateElectrostaticEnergy(const TArray<FMMAtom> &Atoms) const
     {
         for (int32 j = i + 1; j < Atoms.Num(); ++j)
         {
-            float Dist = FVector::Dist(Atoms[i].Position, Atoms[j].Position) / 100.0f; // Convert to Å
+            float Dist = FVector::Dist(Atoms[i].Position, Atoms[j].Position); // Convert to Å
             if (Dist < 0.5f)
                 continue; // Avoid singularity
             if (Dist > CutoffA)
@@ -696,7 +733,7 @@ float AMMGBSA::CalculateVanDerWaalsEnergy(const TArray<FMMAtom> &Atoms) const
     {
         for (int32 j = i + 1; j < Atoms.Num(); ++j)
         {
-            float Dist = FVector::Dist(Atoms[i].Position, Atoms[j].Position) / 100.0f; // Convert to Å
+            float Dist = FVector::Dist(Atoms[i].Position, Atoms[j].Position); // Convert to Å
             if (Dist < 0.5f)
                 continue;
             if (Dist > CutoffA)
@@ -762,7 +799,7 @@ float AMMGBSA::CalculateGBEnergy(const TArray<FMMAtom> &Atoms)
     {
         for (int32 j = i + 1; j < AtomsCopy.Num(); ++j)
         {
-            float Dist = FVector::Dist(AtomsCopy[i].Position, AtomsCopy[j].Position) / 100.0f;
+            float Dist = FVector::Dist(AtomsCopy[i].Position, AtomsCopy[j].Position);
 
             // Only include pairwise GB contribution if within cutoff
             if (Dist > CutoffA)
@@ -839,7 +876,7 @@ float AMMGBSA::CalculateGBEnergyPair(const TArray<FMMAtom> &Atoms1, const TArray
         for (int32 j = 0; j < Atoms2Copy.Num(); ++j)
         {
             const FMMAtom &B = Atoms2Copy[j];
-            float Dist = FVector::Dist(A.Position, B.Position) / 100.0f;
+            float Dist = FVector::Dist(A.Position, B.Position);
 
             if (Dist > CutoffA || Dist < 0.5f)
                 continue;
@@ -907,7 +944,7 @@ void AMMGBSA::CalculateBornRadii(TArray<FMMAtom> &Atoms)
         const FElementData *Data = ElementDatabase.Find(Atoms[i].Element);
         float Scale = Data ? Data->GBRadiusScale : 1.0f;
 
-        Atoms[i].GBRadius = Atoms[i].Radius * Scale / 100.0f; // Convert to Å
+        Atoms[i].GBRadius = Atoms[i].Radius * Scale; // Convert to Å
 
         // Adjust based on burial
         if (Rho > 0.0f)
@@ -938,8 +975,8 @@ float AMMGBSA::GetEffectiveBornRadius(const FMMAtom &Atom, const TArray<FMMAtom>
         float DistSq = FVector::DistSquared(Atom.Position, Other.Position);
         if (DistSq < CutoffSq && DistSq > 1.0f)
         {
-            float Dist = FMath::Sqrt(DistSq) / 100.0f; // Å
-            Rho += FMath::Exp(-Dist / 3.0f);           // Exponential decay
+            float Dist = FMath::Sqrt(DistSq); // Å
+            Rho += FMath::Exp(-Dist / 3.0f);  // Exponential decay
         }
     }
 
@@ -963,8 +1000,8 @@ void AMMGBSA::CalculateSASA(TArray<FMMAtom> &Atoms)
     // Simplified SASA calculation using sphere overlap
     // More accurate: Lee-Richards algorithm, Shrake-Rupley
 
-    const int32 NumSpherePoints = 92;                   // Fibonacci sphere sampling
-    const float ProbeRad = SolventProbeRadius * 100.0f; // Convert to UE units
+    const int32 NumSpherePoints = 92;          // Fibonacci sphere sampling
+    const float ProbeRad = SolventProbeRadius; // Convert to UE units
 
     for (int32 i = 0; i < Atoms.Num(); ++i)
     {
@@ -1011,22 +1048,16 @@ void AMMGBSA::CalculateSASA(TArray<FMMAtom> &Atoms)
 
 void AMMGBSA::AssignPartialCharges(TArray<FMMAtom> &Atoms)
 {
-    // Improved charge assignment based on element type and chemical context
-    // This is still a simplified model - real charges would come from QM or force field
-
     TSet<FString> WarnedElements;
 
     for (int32 i = 0; i < Atoms.Num(); ++i)
     {
         FMMAtom &Atom = Atoms[i];
         float BaseCharge = 0.0f;
-
-        // Assign charges based on element with chemical context
         FString El = Atom.Element.ToUpper();
 
         if (El == TEXT("C"))
         {
-            // Carbons: small positive charge in polar environments, neutral otherwise
             int32 NearbyHeteroatoms = 0;
             for (int32 j = 0; j < Atoms.Num(); ++j)
             {
@@ -1035,7 +1066,7 @@ void AMMGBSA::AssignPartialCharges(TArray<FMMAtom> &Atoms)
                 FString OtherEl = Atoms[j].Element.ToUpper();
                 if (OtherEl == TEXT("N") || OtherEl == TEXT("O") || OtherEl == TEXT("S"))
                 {
-                    float Dist = FVector::Dist(Atom.Position, Atoms[j].Position) / 100.0f; // Å
+                    float Dist = FVector::Dist(Atom.Position, Atoms[j].Position);
                     if (Dist < 2.5f)
                     {
                         NearbyHeteroatoms++;
@@ -1045,46 +1076,44 @@ void AMMGBSA::AssignPartialCharges(TArray<FMMAtom> &Atoms)
 
             if (NearbyHeteroatoms > 0)
             {
-                BaseCharge = 0.0375f * NearbyHeteroatoms;  // REDUCED from 0.075
-                BaseCharge = FMath::Min(BaseCharge, 0.1f); // REDUCED cap from 0.2
+                BaseCharge = 0.3f * NearbyHeteroatoms;     // Doubled from 0.15
+                BaseCharge = FMath::Min(BaseCharge, 0.6f); // Higher cap
             }
             else
             {
-                BaseCharge = 0.0125f; // REDUCED from 0.025
+                BaseCharge = 0.1f; // Doubled from 0.05
             }
         }
         else if (El == TEXT("N"))
         {
-            BaseCharge = -0.1f; // REDUCED from -0.2
+            BaseCharge = -0.5f; // Reduced back from -0.8
         }
         else if (El == TEXT("O"))
         {
-            BaseCharge = -0.125f; // REDUCED from -0.25
+            BaseCharge = -0.6f; // Reduced from -0.8
         }
         else if (El == TEXT("S"))
         {
-            BaseCharge = -0.05f; // REDUCED from -0.1
+            BaseCharge = -0.3f; // INCREASED from -0.2
         }
         else if (El == TEXT("P"))
         {
-            BaseCharge = 0.2f; // REDUCED from 0.4
+            BaseCharge = 1.0f; // INCREASED from 0.8
         }
         else if (El == TEXT("H"))
         {
-            BaseCharge = 0.025f; // REDUCED from 0.05
+            BaseCharge = 0.2f; // INCREASED from 0.1
         }
         else if (El == TEXT("F") || El == TEXT("CL") || El == TEXT("BR") || El == TEXT("I"))
         {
-            BaseCharge = -0.05f; // REDUCED from -0.1
+            BaseCharge = -0.3f; // INCREASED from -0.2
         }
         else
         {
-            // Metals and others: use database value or default to neutral
             const FElementData *Data = ElementDatabase.Find(El);
             BaseCharge = Data ? Data->TypicalCharge : 0.0f;
         }
 
-        // Apply ChargeScaling to modulate electrostatic strength
         Atom.Charge = BaseCharge * ChargeScaling;
 
         // Warn about zero charges only for unexpected cases
@@ -1393,7 +1422,7 @@ bool AMMGBSA::ValidateStructureQuality(const TArray<FMMAtom> &Ligand, FBindingAf
         for (int32 LIdx = 0; LIdx < Ligand.Num(); ++LIdx)
         {
             const FMMAtom &L = Ligand[LIdx];
-            float Dist = FVector::Dist(R.Position, L.Position) / 100.0f; // Å
+            float Dist = FVector::Dist(R.Position, L.Position); // Å
             MinDistFound = FMath::Min(MinDistFound, Dist);
 
             if (Dist < MinAllowedDistanceA)
@@ -1555,7 +1584,7 @@ void AMMGBSA::MinimizeLigandPosition(TArray<FMMAtom> &Ligand, int32 MaxSteps, fl
                 FVector Direction = Forces[i] / ForceMag;
                 // Cap individual atom displacement to prevent wild movements
                 float Displacement = FMath::Min(StepSize * ForceMag, 1.0f); // Max 1 Å per step
-                Ligand[i].Position += Direction * Displacement * 100.0f;    // Convert to UE units
+                Ligand[i].Position += Direction * Displacement;             // Convert to UE units
             }
         }
 
@@ -1620,7 +1649,7 @@ void AMMGBSA::CalculateForces(const TArray<FMMAtom> &Receptor, const TArray<FMMA
         {
             FVector Diff = L.Position - R.Position;
             float DistUE = Diff.Size();
-            float Dist = DistUE / 100.0f; // Å
+            float Dist = DistUE; // Å
 
             // Skip if too far or essentially at same position
             if (Dist < MinDist || Dist > CutoffA)
