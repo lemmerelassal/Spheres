@@ -1,4 +1,5 @@
 // MMGBSA.h - MM/GBSA Free Energy Calculation for Binding Affinity
+// Complete rewrite with improved physics and numerical stability
 #pragma once
 
 #include "CoreMinimal.h"
@@ -6,58 +7,104 @@
 #include "MMGBSA.generated.h"
 
 class APDBViewer;
-class AMolecularDynamics;
 
+// Forward declarations
+struct FMMAtom;
+
+// Energy calculation result with detailed diagnostics
 USTRUCT(BlueprintType)
-struct FMMOverlapInfo
+struct FEnergyComponents
 {
     GENERATED_BODY()
 
     UPROPERTY(BlueprintReadOnly)
-    FString ReceptorSourceKey;
+    float Electrostatic = 0.0f;
+    
+    UPROPERTY(BlueprintReadOnly)
+    float VanDerWaals = 0.0f;
+    
+    UPROPERTY(BlueprintReadOnly)
+    float GBSolvation = 0.0f;
+    
+    UPROPERTY(BlueprintReadOnly)
+    float SurfaceArea = 0.0f;
+    
+    UPROPERTY(BlueprintReadOnly)
+    float Total = 0.0f;
+    
+    // Diagnostic info
+    UPROPERTY(BlueprintReadOnly)
+    int32 InteractionPairs = 0;
+    
+    UPROPERTY(BlueprintReadOnly)
+    int32 ClashCount = 0;
+    
+    UPROPERTY(BlueprintReadOnly)
+    bool bIsValid = false;
+};
+
+// Detailed overlap information for diagnostics
+USTRUCT(BlueprintType)
+struct FAtomicClash
+{
+    GENERATED_BODY()
 
     UPROPERTY(BlueprintReadOnly)
-    int32 ReceptorAtomIndex;
+    FString Atom1Label;
 
     UPROPERTY(BlueprintReadOnly)
-    FString ReceptorElement;
+    FString Atom2Label;
 
     UPROPERTY(BlueprintReadOnly)
-    FVector ReceptorPosition;
+    FVector Position1;
 
     UPROPERTY(BlueprintReadOnly)
-    int32 LigandAtomIndex;
+    FVector Position2;
 
     UPROPERTY(BlueprintReadOnly)
-    FString LigandElement;
+    float Distance;
 
     UPROPERTY(BlueprintReadOnly)
-    FVector LigandPosition;
+    float MinDistance;
 
     UPROPERTY(BlueprintReadOnly)
-    float DistanceA;
+    float Severity; // 0-1, where 1 is catastrophic
 
-    UPROPERTY(BlueprintReadOnly)
-    float SumRadiiA;
-
-    UPROPERTY(BlueprintReadOnly)
-    float PairVDW;
-
-    FMMOverlapInfo()
-        : ReceptorSourceKey(TEXT(""))
-        , ReceptorAtomIndex(-1)
-        , ReceptorElement(TEXT(""))
-        , ReceptorPosition(FVector::ZeroVector)
-        , LigandAtomIndex(-1)
-        , LigandElement(TEXT(""))
-        , LigandPosition(FVector::ZeroVector)
-        , DistanceA(0.0f)
-        , SumRadiiA(0.0f)
-        , PairVDW(0.0f)
+    FAtomicClash()
+        : Position1(FVector::ZeroVector)
+        , Position2(FVector::ZeroVector)
+        , Distance(0.0f)
+        , MinDistance(0.0f)
+        , Severity(0.0f)
     {}
 };
 
-// Result of MM/GBSA calculation for a single ligand
+// Structure quality assessment
+USTRUCT(BlueprintType)
+struct FStructureQuality
+{
+    GENERATED_BODY()
+
+    UPROPERTY(BlueprintReadOnly)
+    bool bIsAcceptable = false;
+
+    UPROPERTY(BlueprintReadOnly)
+    int32 SevereClashes = 0;
+
+    UPROPERTY(BlueprintReadOnly)
+    int32 ModerateClashes = 0;
+
+    UPROPERTY(BlueprintReadOnly)
+    float WorstClashSeverity = 0.0f;
+
+    UPROPERTY(BlueprintReadOnly)
+    FString RecommendedAction;
+
+    UPROPERTY(BlueprintReadOnly)
+    TArray<FAtomicClash> TopClashes;
+};
+
+// Final binding affinity result
 USTRUCT(BlueprintType)
 struct FBindingAffinityResult
 {
@@ -69,102 +116,55 @@ struct FBindingAffinityResult
     UPROPERTY(BlueprintReadOnly)
     FString LigandKey;
     
-    // Energy components (kcal/mol)
+    // Energy breakdown
     UPROPERTY(BlueprintReadOnly)
-    float EMM_Complex;  // MM energy of complex
+    FEnergyComponents ComplexEnergy;
     
     UPROPERTY(BlueprintReadOnly)
-    float EMM_Receptor; // MM energy of receptor alone
+    FEnergyComponents ReceptorEnergy;
     
     UPROPERTY(BlueprintReadOnly)
-    float EMM_Ligand;   // MM energy of ligand alone
+    FEnergyComponents LigandEnergy;
+    
+    // Delta values (binding contributions)
+    UPROPERTY(BlueprintReadOnly)
+    float DeltaElectrostatic = 0.0f; // ΔE_elec
     
     UPROPERTY(BlueprintReadOnly)
-    float DeltaEMM;     // EMM_Complex - EMM_Receptor - EMM_Ligand
+    float DeltaVDW = 0.0f; // ΔE_vdw
     
     UPROPERTY(BlueprintReadOnly)
-    float GB_Complex;   // GB solvation of complex
+    float DeltaGB = 0.0f; // ΔG_solv
     
     UPROPERTY(BlueprintReadOnly)
-    float GB_Receptor;  // GB solvation of receptor
+    float DeltaSA = 0.0f; // ΔG_SA
+    
+    // Final binding free energy and affinity
+    UPROPERTY(BlueprintReadOnly)
+    float DeltaG_Binding = 0.0f; // kcal/mol
     
     UPROPERTY(BlueprintReadOnly)
-    float GB_Ligand;    // GB solvation of ligand
+    float Ki_nM = 0.0f; // Dissociation constant in nanomolar
     
-    UPROPERTY(BlueprintReadOnly)
-    float DeltaGGB;     // GB_Complex - GB_Receptor - GB_Ligand
-    
-    UPROPERTY(BlueprintReadOnly)
-    float SA_Complex;   // Surface area term for complex
-    
-    UPROPERTY(BlueprintReadOnly)
-    float SA_Receptor;  // Surface area term for receptor
-    
-    UPROPERTY(BlueprintReadOnly)
-    float SA_Ligand;    // Surface area term for ligand
-    
-    UPROPERTY(BlueprintReadOnly)
-    float DeltaGSA;     // SA_Complex - SA_Receptor - SA_Ligand
-    
-    // Final binding free energy
-    UPROPERTY(BlueprintReadOnly)
-    float DeltaG_Binding; // DeltaEMM + DeltaGGB + DeltaGSA
-    
-    // Dissociation constant (Ki) in micromolar
-    UPROPERTY(BlueprintReadOnly)
-    float Ki_uM;
-    
-    // Binding affinity category
     UPROPERTY(BlueprintReadOnly)
     FString AffinityClass; // "Very Strong", "Strong", "Moderate", "Weak"
-
-    // Per-atom overlap diagnostics
-    UPROPERTY(BlueprintReadOnly)
-    int32 OverlapCount;
-
-    UPROPERTY(BlueprintReadOnly)
-    bool bHasSevereOverlap;
-
-    // Detailed overlap info
-    UPROPERTY(BlueprintReadOnly)
-    TArray<struct FMMOverlapInfo> Overlaps;
-
-    // Whether this result is valid (calculated)
-    UPROPERTY(BlueprintReadOnly)
-    bool bIsValid;
     
-    // NEW: Structure quality warnings
+    // Structure quality
     UPROPERTY(BlueprintReadOnly)
-    bool bNeedsMinimization;
+    FStructureQuality QualityAssessment;
     
     UPROPERTY(BlueprintReadOnly)
-    FString QualityWarning;
+    bool bIsValid = false;
     
-    FBindingAffinityResult()
-        : EMM_Complex(0.0f)
-        , EMM_Receptor(0.0f)
-        , EMM_Ligand(0.0f)
-        , DeltaEMM(0.0f)
-        , GB_Complex(0.0f)
-        , GB_Receptor(0.0f)
-        , GB_Ligand(0.0f)
-        , DeltaGGB(0.0f)
-        , SA_Complex(0.0f)
-        , SA_Receptor(0.0f)
-        , SA_Ligand(0.0f)
-        , DeltaGSA(0.0f)
-        , DeltaG_Binding(0.0f)
-        , Ki_uM(0.0f)
-        , AffinityClass(TEXT("Unknown"))
-        , OverlapCount(0)
-        , bHasSevereOverlap(false)
-        , bIsValid(false)
-        , bNeedsMinimization(false)
-        , QualityWarning(TEXT(""))
-    {}
+    UPROPERTY(BlueprintReadOnly)
+    FString ErrorMessage;
+    
+    // Detailed diagnostics (optional, for debugging)
+    UPROPERTY(BlueprintReadOnly)
+    TArray<FString> CalculationLog;
 };
 
-// Atom information for energy calculations
+// Internal atom representation
 USTRUCT()
 struct FMMAtom
 {
@@ -172,25 +172,49 @@ struct FMMAtom
     
     FVector Position;
     FString Element;
-    float Charge;
-    float Radius;      // Van der Waals radius
-    float GBRadius;    // Born radius for GB
-    float SASA;        // Solvent accessible surface area
-    bool bIsReceptor;  // True if part of receptor, false if ligand
+    FString Label; // e.g., "ARG123:NH1" for diagnostics
     
-    // Source tracking for diagnostics
-    FString SourceKey; // Residue key (for receptor) or Ligand key (for ligand)
-    int32 SourceIndex; // Atom index within the source
-
+    float Charge;
+    float VDWRadius;
+    float VDWEpsilon;
+    float BornRadius; // For GB calculation
+    float SASA; // Solvent accessible surface area
+    
+    bool bIsReceptor; // True if part of receptor, false if ligand
+    int32 SourceIndex; // Index in original structure
+    
     FMMAtom()
         : Position(FVector::ZeroVector)
         , Element(TEXT("C"))
+        , Label(TEXT(""))
         , Charge(0.0f)
-        , Radius(170.0f)
-        , GBRadius(0.0f)
+        , VDWRadius(1.7f)
+        , VDWEpsilon(0.086f)
+        , BornRadius(0.0f)
         , SASA(0.0f)
         , bIsReceptor(true)
         , SourceIndex(-1)
+    {}
+};
+
+// Force field parameters for each element
+USTRUCT()
+struct FForceFieldParams
+{
+    GENERATED_BODY()
+    
+    float VDWRadius; // Ångströms
+    float VDWEpsilon; // kcal/mol
+    float BaseCharge; // Typical partial charge
+    float BornRadiusScale; // Scaling factor for GB
+    float Electronegativity; // For charge refinement
+    
+    FForceFieldParams()
+        : VDWRadius(1.7f)
+        , VDWEpsilon(0.086f)
+        , BaseCharge(0.0f)
+        , BornRadiusScale(1.0f)
+        , Electronegativity(2.5f)
     {}
 };
 
@@ -204,11 +228,13 @@ class SPHERES_API AMMGBSA : public AActor
 public:
     AMMGBSA();
     
+    // === Public API ===
+    
     // Calculate binding affinity for a specific ligand
     UFUNCTION(BlueprintCallable, Category = "MM/GBSA")
     FBindingAffinityResult CalculateBindingAffinity(const FString& LigandKey);
     
-    // Calculate binding affinities for all visible ligands
+    // Calculate for all visible ligands
     UFUNCTION(BlueprintCallable, Category = "MM/GBSA")
     TArray<FBindingAffinityResult> CalculateAllBindingAffinities();
     
@@ -216,161 +242,159 @@ public:
     UFUNCTION(BlueprintCallable, Category = "MM/GBSA")
     void InitializeFromViewer(APDBViewer* Viewer);
     
-    // Get cached result for a ligand
+    // Check structure quality without full calculation
+    UFUNCTION(BlueprintCallable, Category = "MM/GBSA")
+    FStructureQuality AssessStructureQuality(const FString& LigandKey);
+    
+    // Minimize structure to relieve clashes
+    UFUNCTION(BlueprintCallable, Category = "MM/GBSA")
+    bool MinimizeStructure(const FString& LigandKey, int32 MaxSteps = 1000, float Tolerance = 0.1f);
+    
+    // Clear cached results
+    UFUNCTION(BlueprintCallable, Category = "MM/GBSA")
+    void ClearCache();
+    
+    // Get cached result for a ligand (for backwards compatibility)
     UFUNCTION(BlueprintPure, Category = "MM/GBSA")
     bool GetCachedResult(const FString& LigandKey, FBindingAffinityResult& OutResult) const;
-    
-    // Set temperature for free energy calculation
-    UFUNCTION(BlueprintCallable, Category = "MM/GBSA")
-    void SetTemperature(float TempKelvin) { Temperature = TempKelvin; }
-    
-    // NEW: Minimize structure to relieve clashes before calculation
-    UFUNCTION(BlueprintCallable, Category = "MM/GBSA")
-    bool MinimizeStructure(const FString& LigandKey, int32 MaxSteps = 500, float Tolerance = 0.1f);
     
     // Event fired when calculation completes
     UPROPERTY(BlueprintAssignable, Category = "MM/GBSA")
     FOnBindingAffinityCalculated OnAffinityCalculated;
 
-    // Run a parameter sweep over GBScale and ChargeScaling for a set of ligands. Results are logged and written to Saved/MMGBSA_Sweep_<timestamp>.csv
-    UFUNCTION(BlueprintCallable, Category = "MM/GBSA")
-    void RunParameterSweep(const TArray<float>& GBScales, const TArray<float>& ChargeScales, const TArray<FString>& LigandKeys);
-
 protected:
     virtual void BeginPlay() override;
     
-    // MM/GBSA parameters
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float Temperature = 298.15f; // Kelvin (25°C)
+    // === Physics Parameters ===
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float InteriorDielectric = 10.0f; // Protein interior
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Physics")
+    float Temperature = 298.15f; // Kelvin
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Physics")
+    float InteriorDielectric = 10.0f; // Protein interior (higher = weaker electrostatics)
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Physics")
     float ExteriorDielectric = 78.5f; // Water
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float SurfaceTension = 0.0072f; // kcal/(mol·Å²)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Physics")
+    float SaltConcentration = 0.15f; // M (physiological)
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float SolventProbeRadius = 1.4f; // Å (water probe)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Physics")
+    float SurfaceTension = 0.0072f; // kcal/(mol·Ų) for nonpolar solvation
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float SaltConcentration = 0.15f; // M (150 mM, physiological)
-
-    // Soft-core van der Waals options
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    bool bUseSoftCoreVDW = true;
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float SoftCoreAlpha = 0.8f; // Å - soft-core smoothing parameter
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float MaxPairVDW = 50.0f; // kcal/mol - REDUCED from 100.0 to cap extremes earlier
-
-    // Receptor-ligand specific cutoff (Å) for pairwise contributions
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float ReceptorLigandCutoffA = 8.0f; // Å - INCREASED from 6.0 to include more interactions
-
-    // GB-specific parameters
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float ReceptorLigandGBCutoffA = 10.0f; // Å - INCREASED from 8.0
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float MaxGBPerAtom = 150.0f; // kcal/mol - REDUCED from 200.0
-
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float MaxGBPair = 150.0f; // kcal/mol - REDUCED from 200.0
-
-    // Charge scaling - REDUCED for crystal structures
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float ChargeScaling = 0.3f; // REDUCED from 0.4 - more realistic for unminimized structures
-
-    // Minimum allowed GB radius (Å)
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float MinGBRadius = 1.2f; // Å - INCREASED from 0.8 to avoid tiny radii
-
-    // Clamp for ΔGGB magnitude
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float MaxDeltaGB = 500.0f;
-
-    // GB scaling factor - INCREASED for less aggressive scaling
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float GBScale = -2.0f; // INCREASED from 0.03 - less aggressive correction
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Physics")
+    float SolventProbeRadius = 1.4f; // Ų (water)
     
-    // NEW: Structure validation parameters
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    float MinAllowedDistanceA = 1.8f; // Å - minimum acceptable atom-atom distance
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Physics")
+    float EntropyPenalty = 5.0f; // Base conformational entropy loss (kcal/mol, +0.08 per heavy atom, +ligand corrections)
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    int32 MaxAllowedOverlaps = 3; // Allow a few minor overlaps before rejecting
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Physics")
+    float ChargeScalingFactor = 0.95f; // Scale all charges (0.5-1.0 for unminimized structures)
     
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA Parameters")
-    bool bAutoMinimizeOnOverlap = true; // Automatically minimize if overlaps detected
+    // === Calculation Settings ===
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Settings")
+    float ElectrostaticCutoff = 15.0f; // Ų
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Settings")
+    float VDWCutoff = 12.0f; // Ų
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Settings")
+    float GBCutoff = 20.0f; // Ų
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Settings")
+    float GBScaleFactor = 0.15f; // Empirical scaling for GB term (0.1-0.3 typical)
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Settings")
+    bool bUseSoftCore = true; // Soften VDW at short range
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Settings")
+    float SoftCoreAlpha = 0.5f; // Ų
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Settings")
+    bool bUseDistanceDependentDielectric = true; // More realistic for unminimized structures
+    
+    // === Quality Control ===
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Quality")
+    float SevereClashThreshold = 0.7f; // Fraction of sum of VDW radii
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Quality")
+    float ModerateClashThreshold = 0.85f; // Fraction of sum of VDW radii
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Quality")
+    int32 MaxAllowedSevereClashes = 2; // Before rejecting structure
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Quality")
+    bool bAutoMinimizeOnClash = true;
+    
+    // === Minimization Settings ===
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Minimization")
+    int32 DefaultMinimizationSteps = 5000;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "MM/GBSA|Minimization")
+    float MinimizationTolerance = 0.01f; // kcal/(mol·Ų)
 
 private:
-    // Track parameter changes to invalidate cache
-    float LastChargeScaling = 0.0f;
-    float LastGBScale = 0.0f;
-    
-    void CheckParameterChanges();
+    // === Internal State ===
     
     UPROPERTY()
     APDBViewer* ViewerReference;
     
-    // Cached atom data
     TArray<FMMAtom> ReceptorAtoms;
     TMap<FString, TArray<FMMAtom>> LigandAtoms;
-    
-    // Cached results
     TMap<FString, FBindingAffinityResult> CachedResults;
+    TMap<FString, FForceFieldParams> ForceField;
     
-    // Energy calculation methods
-    float CalculateMMEnergy(const TArray<FMMAtom>& Atoms) const;
-    float CalculateMMEnergyPair(const TArray<FMMAtom>& Atoms1, const TArray<FMMAtom>& Atoms2) const;
-    float CalculateElectrostaticEnergy(const TArray<FMMAtom>& Atoms) const;
-    float CalculateVanDerWaalsEnergy(const TArray<FMMAtom>& Atoms) const;
+    // === Core Energy Calculation Functions ===
     
-    // Generalized Born solvation
-    float CalculateGBEnergy(const TArray<FMMAtom>& Atoms);
-    float CalculateGBEnergyPair(const TArray<FMMAtom>& Atoms1, const TArray<FMMAtom>& Atoms2);
-    void CalculateBornRadii(TArray<FMMAtom>& Atoms);
-    float GetEffectiveBornRadius(const FMMAtom& Atom, const TArray<FMMAtom>& AllAtoms);
+    // Calculate total MM energy for a system
+    FEnergyComponents CalculateMMEnergy(const TArray<FMMAtom>& Atoms) const;
     
-    // Surface area term
-    float CalculateSurfaceAreaEnergy(const TArray<FMMAtom>& Atoms);
-    void CalculateSASA(TArray<FMMAtom>& Atoms);
+    // Calculate pairwise interaction energy (receptor-ligand only)
+    FEnergyComponents CalculatePairwiseEnergy(const TArray<FMMAtom>& Receptor, const TArray<FMMAtom>& Ligand) const;
     
-    // Helper functions
+    // Individual energy terms
+    float CalculateElectrostatic(const FMMAtom& A, const FMMAtom& B, float Distance) const;
+    float CalculateVDW(const FMMAtom& A, const FMMAtom& B, float Distance) const;
+    float CalculateGBPair(const FMMAtom& A, const FMMAtom& B, float Distance) const;
+    
+    // GB-specific calculations
+    void CalculateBornRadii(TArray<FMMAtom>& Atoms) const;
+    float CalculateGBEnergy(TArray<FMMAtom>& Atoms) const;
+    
+    // SASA calculation
+    void CalculateSASA(TArray<FMMAtom>& Atoms) const;
+    float CalculateSurfaceAreaEnergy(TArray<FMMAtom>& Atoms) const;
+    
+    // === Structure Quality Assessment ===
+    
+    FStructureQuality AssessQuality(const TArray<FMMAtom>& Receptor, const TArray<FMMAtom>& Ligand) const;
+    TArray<FAtomicClash> DetectClashes(const TArray<FMMAtom>& Receptor, const TArray<FMMAtom>& Ligand) const;
+    
+    // === Structure Preparation ===
+    
     void LoadAtomsFromViewer();
-    void AssignPartialCharges(TArray<FMMAtom>& Atoms);
-
-    // Called when viewer loads/refreshes ligands
-    UFUNCTION()
-    void OnViewerLigandsLoaded();
-    float EstimateChargeFromElement(const FString& Element) const;
-    float GetVDWRadius(const FString& Element) const;
-    float GetVDWEpsilon(const FString& Element) const;
+    void AssignForceFieldParameters(TArray<FMMAtom>& Atoms);
+    void RefinePartialCharges(TArray<FMMAtom>& Atoms);
     
-    // Convert ΔG to Ki
-    float DeltaGToKi(float DeltaG_kcal_mol) const;
-    FString ClassifyAffinity(float DeltaG_kcal_mol) const;
+    // === Energy Minimization ===
     
-    // NEW: Structure validation
-    bool ValidateStructureQuality(const TArray<FMMAtom>& Ligand, FBindingAffinityResult& Result);
-    
-    // NEW: Simple energy minimization
-    void MinimizeLigandPosition(TArray<FMMAtom>& Ligand, int32 MaxSteps, float Tolerance);
+    void MinimizeLigand(TArray<FMMAtom>& Ligand, int32 MaxSteps, float Tolerance);
     void CalculateForces(const TArray<FMMAtom>& Receptor, const TArray<FMMAtom>& Ligand, TArray<FVector>& Forces) const;
     
-    // Element database
-    struct FElementData
-    {
-        float VDWRadius;
-        float VDWEpsilon;
-        float TypicalCharge;
-        float GBRadiusScale;
-    };
-    TMap<FString, FElementData> ElementDatabase;
-    void InitializeElementDatabase();
+    // === Thermodynamics ===
+    
+    float CalculateKi(float DeltaG_kcal_mol) const;
+    FString ClassifyAffinity(float DeltaG_kcal_mol) const;
+    
+    // === Utilities ===
+    
+    void InitializeForceField();
+    FForceFieldParams GetForceFieldParams(const FString& Element) const;
+    void LogEnergyBreakdown(const FString& Label, const FEnergyComponents& Energy) const;
+    
+    UFUNCTION()
+    void OnViewerLigandsLoaded();
 };

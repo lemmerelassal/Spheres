@@ -6,6 +6,66 @@
 #include "MMGBSA.h"
 #include "PDBViewer.generated.h"
 
+// Interaction type enumeration
+UENUM(BlueprintType)
+enum class EInteractionType : uint8
+{
+    HydrogenBond UMETA(DisplayName = "Hydrogen Bond"),
+    SaltBridge UMETA(DisplayName = "Salt Bridge"),
+    PiStacking UMETA(DisplayName = "Pi-Stacking"),
+    Hydrophobic UMETA(DisplayName = "Hydrophobic"),
+    VanDerWaals UMETA(DisplayName = "Van der Waals"),
+    Cation_Pi UMETA(DisplayName = "Cation-Pi")
+};
+
+// Structure to store molecular interactions
+USTRUCT(BlueprintType)
+struct FMolecularInteraction
+{
+    GENERATED_BODY()
+    
+    UPROPERTY(BlueprintReadOnly)
+    EInteractionType Type;
+    
+    UPROPERTY(BlueprintReadOnly)
+    FString Residue1;  // e.g., "ALA_42_A"
+    
+    UPROPERTY(BlueprintReadOnly)
+    FString Residue2;  // e.g., "LYS_108_A" or ligand key
+    
+    UPROPERTY(BlueprintReadOnly)
+    FString Atom1;     // Atom name in residue1
+    
+    UPROPERTY(BlueprintReadOnly)
+    FString Atom2;     // Atom name in residue2
+    
+    UPROPERTY(BlueprintReadOnly)
+    FVector Position1; // 3D position of atom1
+    
+    UPROPERTY(BlueprintReadOnly)
+    FVector Position2; // 3D position of atom2
+    
+    UPROPERTY(BlueprintReadOnly)
+    float Distance;    // Distance in Angstroms
+    
+    UPROPERTY(BlueprintReadOnly)
+    float Angle;       // For H-bonds: donor-H-acceptor angle
+    
+    UPROPERTY(BlueprintReadOnly)
+    float Energy;      // Estimated interaction energy (kcal/mol)
+    
+    UPROPERTY(BlueprintReadOnly)
+    bool bIsProteinLigand; // True if interaction is between protein and ligand
+    
+    FMolecularInteraction()
+        : Type(EInteractionType::VanDerWaals)
+        , Distance(0.0f)
+        , Angle(0.0f)
+        , Energy(0.0f)
+        , bIsProteinLigand(false)
+    {}
+};
+
 USTRUCT()
 struct FResidueMetadata
 {
@@ -126,6 +186,8 @@ public:
     UPROPERTY(BlueprintAssignable, Category = "PDB Viewer") FOnResiduesLoaded OnResiduesLoaded;
     DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnLigandsLoaded);
     UPROPERTY(BlueprintAssignable, Category = "PDB Viewer") FOnLigandsLoaded OnLigandsLoaded;
+    DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnInteractionsCalculated);
+    UPROPERTY(BlueprintAssignable, Category = "PDB Viewer") FOnInteractionsCalculated OnInteractionsCalculated;
     
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void SaveStructureToFile(const FString& FilePath);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void LoadStructureFromFile(const FString& FilePath);
@@ -158,12 +220,61 @@ public:
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
     void ToggleHydrogens();
     
+    // ===== NEW: INTERACTION DETECTION FUNCTIONS =====
+    
+    // Calculate all molecular interactions
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Interactions")
+    void CalculateAllInteractions(bool bProteinProtein = true, bool bProteinLigand = true);
+    
+    // Toggle visibility of specific interaction types
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Interactions")
+    void ToggleInteractionType(EInteractionType Type, bool bVisible);
+    
+    // Show/hide all interactions
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Interactions")
+    void ShowAllInteractions(bool bVisible);
+    
+    // Get list of interactions by type
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Interactions")
+    TArray<FMolecularInteraction> GetInteractionsByType(EInteractionType Type) const;
+    
+    // Get all calculated interactions
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Interactions")
+    TArray<FMolecularInteraction> GetAllInteractions() const { return DetectedInteractions; }
+    
+    // Get interactions involving a specific residue or ligand
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Interactions")
+    TArray<FMolecularInteraction> GetInteractionsForResidue(const FString& ResidueKey) const;
+    
+    // Clear all interactions and their visual representations
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Interactions")
+    void ClearAllInteractions();
+    
+    // Configure interaction detection parameters
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer|Interactions")
+    float HBondMaxDistance = 3.5f; // Angstroms
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer|Interactions")
+    float HBondMinAngle = 120.0f; // Degrees
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer|Interactions")
+    float SaltBridgeMaxDistance = 4.0f; // Angstroms
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer|Interactions")
+    float PiStackingMaxDistance = 5.5f; // Angstroms
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer|Interactions")
+    float HydrophobicMaxDistance = 5.0f; // Angstroms
+    
     // Debug functions
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")
     void DebugPrintLigandInfo();
 
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")
     int32 GetHydrogenCount() const;
+    
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")
+    void DebugPrintInteractions();
     
     // Legacy functions (kept for backwards compatibility)
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<FString> GetResidueList() const;
@@ -183,9 +294,9 @@ public:
     UPROPERTY()
     class UMDControlWidget* MDControlWidgetInstance;
 
-    // Debug: highlight severe overlaps found by MMGBSA
+/*     // Debug: highlight severe overlaps found by MMGBSA
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")
-    void HighlightOverlapAtoms(const TArray<FMMOverlapInfo>& Overlaps);
+    void HighlightOverlapAtoms(const TArray<FMMOverlapInfo>& Overlaps); */
 
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")
     void ClearOverlapMarkers();
@@ -211,6 +322,15 @@ protected:
 
     TSet<FString> ChainIDs; // Track all chains in the structure
     bool bHydrogensVisible = true;
+    
+    // ===== NEW: INTERACTION DATA =====
+    UPROPERTY()
+    TArray<FMolecularInteraction> DetectedInteractions;
+    
+    UPROPERTY()
+    TArray<UStaticMeshComponent*> InteractionMeshes;
+    
+    TMap<EInteractionType, bool> InteractionVisibility;
     
     void FetchAndDisplayStructure(const FString& PDB_ID);
     void FetchFileAsync(const FString& URL, TFunction<void(bool, const FString&)> Callback);
@@ -239,4 +359,56 @@ protected:
     
     // Hydrogen generation helpers
     int32 AddHydrogensToLigand(FLigandInfo* LigInfo);
+    
+    // ===== NEW: INTERACTION DETECTION HELPERS =====
+    
+    // Detect hydrogen bonds
+    void DetectHydrogenBonds(bool bProteinProtein, bool bProteinLigand);
+    
+    // Detect salt bridges
+    void DetectSaltBridges(bool bProteinProtein, bool bProteinLigand);
+    
+    // Detect pi-stacking interactions
+    void DetectPiStacking(bool bProteinProtein, bool bProteinLigand);
+    
+    // Detect hydrophobic interactions
+    void DetectHydrophobicInteractions(bool bProteinProtein, bool bProteinLigand);
+    
+    // Helper: Check if atom can be H-bond donor
+    bool IsHBondDonor(const FString& Element, const FString& AtomName) const;
+    
+    // Helper: Check if atom can be H-bond acceptor
+    bool IsHBondAcceptor(const FString& Element, const FString& AtomName) const;
+    
+    // Helper: Check if residue is charged positive
+    bool IsPositivelyCharged(const FString& ResidueName) const;
+    
+    // Helper: Check if residue is charged negative
+    bool IsNegativelyCharged(const FString& ResidueName) const;
+    
+    // Helper: Check if residue is aromatic
+    bool IsAromatic(const FString& ResidueName) const;
+    
+    // Helper: Check if residue is hydrophobic
+    bool IsHydrophobic(const FString& ResidueName) const;
+    
+    // Helper: Get atom's formal charge
+    int32 GetAtomCharge(const FString& Element, const FString& AtomName, const FString& ResidueName) const;
+    
+    // Helper: Calculate angle between three points (degrees)
+    float CalculateAngle(const FVector& A, const FVector& B, const FVector& C) const;
+    
+    // Helper: Get residue center of mass
+    FVector GetResidueCenterOfMass(FResidueInfo* ResInfo) const;
+    FVector GetLigandCenterOfMass(FLigandInfo* LigInfo) const;
+    
+    // Helper: Get aromatic ring center for residue
+    bool GetAromaticRingCenter(FResidueInfo* ResInfo, FVector& OutCenter, FVector& OutNormal) const;
+    bool GetAromaticRingCenter(FLigandInfo* LigInfo, FVector& OutCenter, FVector& OutNormal) const;
+    
+    // Visualize an interaction
+    void DrawInteraction(const FMolecularInteraction& Interaction);
+    
+    // Get color for interaction type
+    FLinearColor GetInteractionColor(EInteractionType Type) const;
 };

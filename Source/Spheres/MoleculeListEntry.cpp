@@ -14,14 +14,14 @@ void UMoleculeListEntry::NativeConstruct()
     {
         ButtonToggleVisibility->OnClicked.AddDynamic(this, &UMoleculeListEntry::OnToggleClicked);
     }
-    
+
     if (ButtonCalculateAffinity)
     {
         ButtonCalculateAffinity->OnClicked.AddDynamic(this, &UMoleculeListEntry::OnCalculateAffinityClicked);
     }
-    
+
     // Find or create MMGBSA actor
-    TArray<AActor*> Found;
+    TArray<AActor *> Found;
     UGameplayStatics::GetAllActorsOfClass(GetWorld(), AMMGBSA::StaticClass(), Found);
     if (Found.Num() > 0)
     {
@@ -31,17 +31,16 @@ void UMoleculeListEntry::NativeConstruct()
     {
         // Spawn MMGBSA actor
         MMGBSARef = GetWorld()->SpawnActor<AMMGBSA>(AMMGBSA::StaticClass());
-        
+
         // Initialize from viewer
-        APDBViewer* Viewer = Cast<APDBViewer>(
-            UGameplayStatics::GetActorOfClass(GetWorld(), APDBViewer::StaticClass())
-        );
+        APDBViewer *Viewer = Cast<APDBViewer>(
+            UGameplayStatics::GetActorOfClass(GetWorld(), APDBViewer::StaticClass()));
         if (Viewer && MMGBSARef)
         {
             MMGBSARef->InitializeFromViewer(Viewer);
         }
     }
-    
+
     // Bind to affinity calculation event
     if (MMGBSARef)
     {
@@ -74,9 +73,9 @@ void UMoleculeListEntry::ApplyStyling()
     if (ButtonToggleVisibility)
     {
         ButtonToggleVisibility->SetColorAndOpacity(FLinearColor(0.15f, 0.3f, 0.6f));
-        
+
         // Style the button text
-        UTextBlock* ButtonText = Cast<UTextBlock>(ButtonToggleVisibility->GetChildAt(0));
+        UTextBlock *ButtonText = Cast<UTextBlock>(ButtonToggleVisibility->GetChildAt(0));
         if (ButtonText)
         {
             ButtonText->SetColorAndOpacity(FLinearColor::White);
@@ -84,7 +83,7 @@ void UMoleculeListEntry::ApplyStyling()
     }
 }
 
-void UMoleculeListEntry::NativeOnListItemObjectSet(UObject* ListItemObject)
+void UMoleculeListEntry::NativeOnListItemObjectSet(UObject *ListItemObject)
 {
     // This is called when the ListView assigns a molecule node to this entry
     CurrentMoleculeNode = Cast<UPDBMoleculeNode>(ListItemObject);
@@ -112,7 +111,7 @@ void UMoleculeListEntry::NativeOnListItemObjectSet(UObject* ListItemObject)
 
     // Update button appearance
     UpdateButtonText();
-    
+
     // Check for cached affinity result
     UpdateAffinityDisplay();
 }
@@ -122,9 +121,8 @@ void UMoleculeListEntry::OnToggleClicked()
     if (!CurrentMoleculeNode)
         return;
 
-    APDBViewer* Viewer = Cast<APDBViewer>(
-        UGameplayStatics::GetActorOfClass(GetWorld(), APDBViewer::StaticClass())
-    );
+    APDBViewer *Viewer = Cast<APDBViewer>(
+        UGameplayStatics::GetActorOfClass(GetWorld(), APDBViewer::StaticClass()));
 
     if (Viewer)
     {
@@ -137,7 +135,7 @@ void UMoleculeListEntry::OnCalculateAffinityClicked()
 {
     if (!CurrentMoleculeNode || !MMGBSARef)
         return;
-    
+
     if (TextBindingAffinity)
     {
         TextBindingAffinity->SetText(FText::FromString(TEXT("Calculating...")));
@@ -146,7 +144,7 @@ void UMoleculeListEntry::OnCalculateAffinityClicked()
 
     // Calculate binding affinity for this ligand
     FBindingAffinityResult Result = MMGBSARef->CalculateBindingAffinity(CurrentMoleculeNode->MoleculeKey);
-    
+
     if (Result.bIsValid)
     {
         UpdateAffinityDisplay();
@@ -162,7 +160,7 @@ void UMoleculeListEntry::OnCalculateAffinityClicked()
     }
 }
 
-void UMoleculeListEntry::OnAffinityCalculated(const FBindingAffinityResult& Result)
+void UMoleculeListEntry::OnAffinityCalculated(const FBindingAffinityResult &Result)
 {
     // Check if this result is for our molecule
     if (CurrentMoleculeNode && Result.LigandKey == CurrentMoleculeNode->MoleculeKey)
@@ -176,7 +174,7 @@ void UMoleculeListEntry::UpdateButtonText()
     if (!CurrentMoleculeNode || !ButtonToggleVisibility)
         return;
 
-    UTextBlock* ButtonText = Cast<UTextBlock>(ButtonToggleVisibility->GetChildAt(0));
+    UTextBlock *ButtonText = Cast<UTextBlock>(ButtonToggleVisibility->GetChildAt(0));
     if (ButtonText)
     {
         FString ToggleText = CurrentMoleculeNode->bIsVisible ? TEXT("Hide") : TEXT("Show");
@@ -198,7 +196,7 @@ void UMoleculeListEntry::UpdateAffinityDisplay()
 {
     if (!CurrentMoleculeNode || !MMGBSARef)
         return;
-    
+
     // Check for cached result
     FBindingAffinityResult Result;
     if (MMGBSARef->GetCachedResult(CurrentMoleculeNode->MoleculeKey, Result))
@@ -211,8 +209,10 @@ void UMoleculeListEntry::UpdateAffinityDisplay()
                 TextBindingAffinity->SetText(FText::FromString(TEXT("Calculation failed")));
                 TextBindingAffinity->SetColorAndOpacity(FSlateColor(FLinearColor::Red));
             }
-            if (TextKi) TextKi->SetText(FText::FromString(TEXT("")));
-            if (TextAffinityClass) TextAffinityClass->SetText(FText::FromString(TEXT("")));
+            if (TextKi)
+                TextKi->SetText(FText::FromString(TEXT("")));
+            if (TextAffinityClass)
+                TextAffinityClass->SetText(FText::FromString(TEXT("")));
             return;
         }
 
@@ -221,7 +221,7 @@ void UMoleculeListEntry::UpdateAffinityDisplay()
         {
             FString AffinityText = FString::Printf(TEXT("ΔG: %.2f kcal/mol"), Result.DeltaG_Binding);
             TextBindingAffinity->SetText(FText::FromString(AffinityText));
-            
+
             // Color code by affinity
             FLinearColor Color = FLinearColor::White;
             if (Result.DeltaG_Binding < -10.0f)
@@ -234,26 +234,29 @@ void UMoleculeListEntry::UpdateAffinityDisplay()
                 Color = FLinearColor(1.0f, 0.5f, 0.0f); // Weak
             else
                 Color = FLinearColor::Red; // Very weak
-            
+
             TextBindingAffinity->SetColorAndOpacity(FSlateColor(Color));
         }
-        
+
         // Display Ki
         if (TextKi)
         {
             FString KiText;
-            if (Result.Ki_uM < 0.001f)
-                KiText = FString::Printf(TEXT("Ki: %.2f pM"), Result.Ki_uM * 1000000.0f);
-            else if (Result.Ki_uM < 1.0f)
-                KiText = FString::Printf(TEXT("Ki: %.2f nM"), Result.Ki_uM * 1000.0f);
-            else if (Result.Ki_uM < 1000.0f)
-                KiText = FString::Printf(TEXT("Ki: %.2f µM"), Result.Ki_uM);
+            // Ki_nM is now in nanomolar (not micromolar)
+            float Ki_uM = Result.Ki_nM / 1000.0f; // Convert nM to µM for display logic
+
+            if (Ki_uM < 0.001f)
+                KiText = FString::Printf(TEXT("Ki: %.2f pM"), Result.Ki_nM * 1000.0f);
+            else if (Ki_uM < 1.0f)
+                KiText = FString::Printf(TEXT("Ki: %.2f nM"), Result.Ki_nM);
+            else if (Ki_uM < 1000.0f)
+                KiText = FString::Printf(TEXT("Ki: %.2f µM"), Ki_uM);
             else
-                KiText = FString::Printf(TEXT("Ki: %.2f mM"), Result.Ki_uM / 1000.0f);
-            
+                KiText = FString::Printf(TEXT("Ki: %.2f mM"), Ki_uM / 1000.0f);
+
             TextKi->SetText(FText::FromString(KiText));
         }
-        
+
         // Display affinity class
         if (TextAffinityClass)
         {
@@ -268,12 +271,12 @@ void UMoleculeListEntry::UpdateAffinityDisplay()
             TextBindingAffinity->SetText(FText::FromString(TEXT("Click to calculate")));
             TextBindingAffinity->SetColorAndOpacity(FSlateColor(FLinearColor::Gray));
         }
-        
+
         if (TextKi)
         {
             TextKi->SetText(FText::FromString(TEXT("")));
         }
-        
+
         if (TextAffinityClass)
         {
             TextAffinityClass->SetText(FText::FromString(TEXT("")));

@@ -1,4 +1,8 @@
 // PDBViewer.cpp – UE 5.6 compatible version with TreeView and SDF support
+// PDBViewer_Interactions.cpp - Molecular Interaction Detection Implementation
+// Add this to your existing PDBViewer.cpp or compile as separate file
+
+#include "Materials/MaterialInstanceDynamic.h"
 
 #include "PDBViewer.h"
 #include "PDBCameraComponent.h"
@@ -759,7 +763,12 @@ void APDBViewer::CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FV
         {
             auto *LigInfo = new FLigandInfo();
             LigInfo->LigandName = FString::Printf(TEXT("%s-%s-%s"), *M->ResidueName, *M->ResidueSeq, *M->Chain);
-            LigInfo->bIsVisible = false;
+
+            // Make water molecules visible by default, hide others
+            bool bIsWater = (M->ResidueName == TEXT("HOH") ||
+                             M->ResidueName == TEXT("H2O") ||
+                             M->ResidueName == TEXT("WAT"));
+            LigInfo->bIsVisible = bIsWater;
 
             for (const auto &A : P.Value)
             {
@@ -815,11 +824,11 @@ void APDBViewer::CreateResiduesFromAtomData(const TMap<FString, TMap<FString, FV
     }
 }
 
-void APDBViewer::GenerateHydrogensForResidue(FResidueInfo* ResInfo)
+void APDBViewer::GenerateHydrogensForResidue(FResidueInfo *ResInfo)
 {
     if (!ResInfo || ResInfo->AtomPositions.Num() == 0)
         return;
-    
+
     // Check if hydrogens already exist
     bool bHasHydrogens = ResInfo->AtomElements.Contains(TEXT("H"));
     if (bHasHydrogens)
@@ -827,45 +836,45 @@ void APDBViewer::GenerateHydrogensForResidue(FResidueInfo* ResInfo)
         UE_LOG(LogTemp, Log, TEXT("Residue %s already has hydrogens"), *ResInfo->ResidueName);
         return;
     }
-    
+
     if (ResInfo->BondPairs.Num() == 0)
     {
-        UE_LOG(LogTemp, Warning, TEXT("Residue %s has no bonds - cannot generate hydrogens"), 
-            *ResInfo->ResidueName);
+        UE_LOG(LogTemp, Warning, TEXT("Residue %s has no bonds - cannot generate hydrogens"),
+               *ResInfo->ResidueName);
         return;
     }
-    
-    UE_LOG(LogTemp, Log, TEXT("Generating hydrogens for residue: %s %s"), 
-        *ResInfo->ResidueName, *ResInfo->ResidueSeq);
-    
+
+    UE_LOG(LogTemp, Log, TEXT("Generating hydrogens for residue: %s %s"),
+           *ResInfo->ResidueName, *ResInfo->ResidueSeq);
+
     TArray<TPair<FVector, int32>> Hydrogens = FHydrogenGenerator::GenerateHydrogens(
         ResInfo->AtomPositions, ResInfo->AtomElements, ResInfo->BondPairs, ResInfo->BondOrders);
-    
+
     UE_LOG(LogTemp, Log, TEXT("  Generated %d hydrogens"), Hydrogens.Num());
-    
-    for (const auto& HPair : Hydrogens)
+
+    for (const auto &HPair : Hydrogens)
     {
         int32 ParentIdx = HPair.Value;
-        
+
         // Store UNSCALED hydrogen position
         int32 HIdx = ResInfo->AtomPositions.Add(HPair.Key);
         ResInfo->AtomElements.Add(TEXT("H"));
         ResInfo->AtomNames.Add(FString::Printf(TEXT("H%d"), HIdx)); // Add atom name
-        
+
         // Apply scaling only when drawing
         FVector ScaledHPos = HPair.Key * PDB::SCALE;
-        DrawSphere(ScaledHPos.X, ScaledHPos.Y, ScaledHPos.Z, FLinearColor::White, 
-                  GetRootComponent(), ResInfo->AtomMeshes);
+        DrawSphere(ScaledHPos.X, ScaledHPos.Y, ScaledHPos.Z, FLinearColor::White,
+                   GetRootComponent(), ResInfo->AtomMeshes);
         ResInfo->AtomMeshes.Last()->SetWorldScale3D(FVector(0.3f));
         ResInfo->AtomMeshes.Last()->SetVisibility(bHydrogensVisible && ResInfo->bIsVisible);
-        
+
         // Scale both positions for drawing the bond
         FVector ScaledParent = ResInfo->AtomPositions[ParentIdx] * PDB::SCALE;
         DrawBond(ScaledParent, ScaledHPos, 1,
-                ResInfo->AtomElements[ParentIdx], TEXT("H"), 
-                GetRootComponent(), ResInfo->BondMeshes);
+                 ResInfo->AtomElements[ParentIdx], TEXT("H"),
+                 GetRootComponent(), ResInfo->BondMeshes);
         ResInfo->BondMeshes.Last()->SetVisibility(bHydrogensVisible && ResInfo->bIsVisible);
-        
+
         ResInfo->BondPairs.Add(TPair<int32, int32>(ParentIdx, HIdx));
         ResInfo->BondOrders.Add(1);
     }
@@ -1167,7 +1176,7 @@ void APDBViewer::ClearOverlapMarkers()
     OverlapMarkers.Empty();
 }
 
-void APDBViewer::HighlightOverlapAtoms(const TArray<FMMOverlapInfo> &Overlaps)
+/* void APDBViewer::HighlightOverlapAtoms(const TArray<FMMOverlapInfo> &Overlaps)
 {
     ClearOverlapMarkers();
     if (!SphereMeshAsset || !SphereMaterialAsset || !CylinderMeshAsset)
@@ -1242,7 +1251,7 @@ void APDBViewer::HighlightOverlapAtoms(const TArray<FMMOverlapInfo> &Overlaps)
         PC->SetViewTarget(this);
     }
 }
-
+ */
 FLinearColor APDBViewer::GetElementColor(const FString &E) const
 {
     static const TMap<FString, FLinearColor> Colors = {
@@ -1644,13 +1653,21 @@ void APDBViewer::ToggleMoleculeVisibility(const FString &MoleculeKey)
         {
             if (P.Key != MoleculeKey && P.Value)
             {
-                P.Value->bIsVisible = false;
-                for (auto *M : P.Value->AtomMeshes)
-                    if (M)
-                        M->SetVisibility(false);
-                for (auto *M : P.Value->BondMeshes)
-                    if (M)
-                        M->SetVisibility(false);
+                // Skip water molecules - keep them visible
+                bool bIsWater = (P.Key.Contains(TEXT("HOH")) ||
+                                 P.Key.Contains(TEXT("H2O")) ||
+                                 P.Key.Contains(TEXT("WAT")));
+
+                if (!bIsWater)
+                {
+                    P.Value->bIsVisible = false;
+                    for (auto *M : P.Value->AtomMeshes)
+                        if (M)
+                            M->SetVisibility(false);
+                    for (auto *M : P.Value->BondMeshes)
+                        if (M)
+                            M->SetVisibility(false);
+                }
             }
         }
     }
