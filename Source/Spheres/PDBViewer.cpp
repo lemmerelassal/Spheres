@@ -873,10 +873,10 @@ void APDBViewer::GenerateHydrogensForResidue(FResidueInfo *ResInfo)
 
         // Apply scaling only when drawing
         FVector ScaledHPos = HPair.Key * PDB::SCALE;
-        DrawSphere(ScaledHPos.X, ScaledHPos.Y, ScaledHPos.Z, FLinearColor::White,
-                   GetRootComponent(), ResInfo->AtomMeshes);
+/*         DrawSphere(ScaledHPos.X, ScaledHPos.Y, ScaledHPos.Z, FLinearColor::White,
+                   GetRootComponent(), ResInfo->AtomMeshes); 
         ResInfo->AtomMeshes.Last()->SetWorldScale3D(FVector(0.3f));
-        ResInfo->AtomMeshes.Last()->SetVisibility(bHydrogensVisible && ResInfo->bIsVisible);
+        ResInfo->AtomMeshes.Last()->SetVisibility(bHydrogensVisible && ResInfo->bIsVisible);*/
 
         // Scale both positions for drawing the bond
         FVector ScaledParent = ResInfo->AtomPositions[ParentIdx] * PDB::SCALE;

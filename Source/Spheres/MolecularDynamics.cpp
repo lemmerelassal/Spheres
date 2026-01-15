@@ -161,7 +161,7 @@ void AMolecularDynamics::InitializeFromViewer(APDBViewer* Viewer)
     }
     
     // Infer bonds from proximity (all atoms, regardless of ligand)
-    const float BondThreshold = 180.0f;
+    const float BondThreshold = 80.0f;
     for (int32 i = 0; i < Atoms.Num(); ++i)
     {
         for (int32 j = i + 1; j < Atoms.Num(); ++j)
@@ -696,8 +696,11 @@ void AMolecularDynamics::EnforceConstraints(float DT)
     }
 }
 
+// FIXED UpdateEnergies() function - Add this to MolecularDynamics.cpp
+
 void AMolecularDynamics::UpdateEnergies()
 {
+    // Calculate kinetic energy
     KineticEnergy = 0.0f;
     for (const FAtomState& A : Atoms)
     {
@@ -705,6 +708,8 @@ void AMolecularDynamics::UpdateEnergies()
     }
     
     PotentialEnergy = 0.0f;
+    
+    // 1. Bond stretch energy (harmonic potential)
     for (const FBondConstraint& B : Bonds)
     {
         if (B.Atom1Index >= Atoms.Num() || B.Atom2Index >= Atoms.Num())
@@ -713,6 +718,74 @@ void AMolecularDynamics::UpdateEnergies()
         float Dist = FVector::Dist(Atoms[B.Atom1Index].Position, Atoms[B.Atom2Index].Position);
         float Disp = Dist - B.RestLength;
         PotentialEnergy += 0.5f * B.SpringConstant * Disp * Disp;
+    }
+    
+    // 2. Lennard-Jones potential energy (non-bonded)
+    if (bUseLennardJones)
+    {
+        const float CutoffSq = CutoffDistance * CutoffDistance;
+        
+        // Use neighbor lists for efficiency (same as force calculation)
+        for (int32 i = 0; i < Atoms.Num(); ++i)
+        {
+            const FAtomState& A1 = Atoms[i];
+            
+            // Use neighbor list if available
+            const TArray<int32>& Neighbors = A1.NeighborList;
+            
+            for (int32 j : Neighbors)
+            {
+                if (j <= i) continue; // Only count each pair once
+                
+                const FAtomState& A2 = Atoms[j];
+                
+                float DistSq = FVector::DistSquared(A1.Position, A2.Position);
+                if (DistSq > CutoffSq || DistSq < KINDA_SMALL_NUMBER) continue;
+                
+                float Dist = FMath::Sqrt(DistSq);
+                
+                // Lennard-Jones potential: U = 4*epsilon*[(sigma/r)^12 - (sigma/r)^6]
+                float SigmaOverR = LJSigma / Dist;
+                float SR6 = SigmaOverR * SigmaOverR * SigmaOverR * 
+                            SigmaOverR * SigmaOverR * SigmaOverR;
+                float SR12 = SR6 * SR6;
+                
+                float LJ_Energy = 4.0f * LJEpsilon * (SR12 - SR6);
+                PotentialEnergy += LJ_Energy;
+            }
+        }
+    }
+    
+    // 3. Electrostatic potential energy (non-bonded)
+    if (bUseElectrostatics)
+    {
+        const float CoulombK = 1389.0f; // e^2/(4*pi*eps0) in kJ/mol*nm
+        const float CutoffSq = CutoffDistance * CutoffDistance;
+        
+        for (int32 i = 0; i < Atoms.Num(); ++i)
+        {
+            const FAtomState& A1 = Atoms[i];
+            if (A1.Charge == 0.0f) continue;
+            
+            const TArray<int32>& Neighbors = A1.NeighborList;
+            
+            for (int32 j : Neighbors)
+            {
+                if (j <= i) continue; // Only count each pair once
+                
+                const FAtomState& A2 = Atoms[j];
+                if (A2.Charge == 0.0f) continue;
+                
+                float DistSq = FVector::DistSquared(A1.Position, A2.Position);
+                if (DistSq > CutoffSq || DistSq < KINDA_SMALL_NUMBER) continue;
+                
+                float Dist = FMath::Sqrt(DistSq);
+                
+                // Coulomb potential: U = k*q1*q2/r
+                float Coulomb_Energy = CoulombK * A1.Charge * A2.Charge / Dist;
+                PotentialEnergy += Coulomb_Energy;
+            }
+        }
     }
     
     TotalEnergy = KineticEnergy + PotentialEnergy;
