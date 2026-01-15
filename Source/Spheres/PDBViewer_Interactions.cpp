@@ -414,34 +414,62 @@ bool APDBViewer::IsHydrophobic(const FString& ResidueName) const
             ResidueName == TEXT("TRP") || ResidueName == TEXT("PRO"));
 }
 
-FVector APDBViewer::GetResidueCenterOfMass(FResidueInfo* ResInfo) const
+
+// OPTIMIZED: Non-const to allow caching
+FVector APDBViewer::GetResidueCenterOfMass(FResidueInfo* ResInfo)
 {
     if (!ResInfo || ResInfo->AtomPositions.Num() == 0)
         return FVector::ZeroVector;
     
+    // Check cache first
+    if (ResInfo->bCenterOfMassCached)
+        return ResInfo->CachedCenterOfMass;
+    
+    // Calculate and cache
     FVector Sum = FVector::ZeroVector;
     for (const FVector& Pos : ResInfo->AtomPositions)
         Sum += Pos;
     
-    return Sum / ResInfo->AtomPositions.Num();
+    ResInfo->CachedCenterOfMass = Sum / ResInfo->AtomPositions.Num();
+    ResInfo->bCenterOfMassCached = true;
+    
+    return ResInfo->CachedCenterOfMass;
 }
 
-FVector APDBViewer::GetLigandCenterOfMass(FLigandInfo* LigInfo) const
+// OPTIMIZED: Non-const to allow caching
+FVector APDBViewer::GetLigandCenterOfMass(FLigandInfo* LigInfo)
 {
     if (!LigInfo || LigInfo->AtomPositions.Num() == 0)
         return FVector::ZeroVector;
     
+    // Check cache first
+    if (LigInfo->bCenterOfMassCached)
+        return LigInfo->CachedCenterOfMass;
+    
+    // Calculate and cache
     FVector Sum = FVector::ZeroVector;
     for (const FVector& Pos : LigInfo->AtomPositions)
         Sum += Pos;
     
-    return Sum / LigInfo->AtomPositions.Num();
+    LigInfo->CachedCenterOfMass = Sum / LigInfo->AtomPositions.Num();
+    LigInfo->bCenterOfMassCached = true;
+    
+    return LigInfo->CachedCenterOfMass;
 }
 
-bool APDBViewer::GetAromaticRingCenter(FResidueInfo* ResInfo, FVector& OutCenter, FVector& OutNormal) const
+// OPTIMIZED: Non-const to allow caching
+bool APDBViewer::GetAromaticRingCenter(FResidueInfo* ResInfo, FVector& OutCenter, FVector& OutNormal)
 {
     if (!ResInfo)
         return false;
+    
+    // Check cache first
+    if (ResInfo->bAromaticCenterCached)
+    {
+        OutCenter = ResInfo->CachedAromaticCenter;
+        OutNormal = ResInfo->CachedAromaticNormal;
+        return true;
+    }
     
     // Find aromatic ring atoms based on residue type
     TArray<FVector> RingAtoms;
@@ -520,13 +548,27 @@ bool APDBViewer::GetAromaticRingCenter(FResidueInfo* ResInfo, FVector& OutCenter
         OutNormal = FVector::UpVector;
     }
     
+    // Cache the results
+    ResInfo->CachedAromaticCenter = OutCenter;
+    ResInfo->CachedAromaticNormal = OutNormal;
+    ResInfo->bAromaticCenterCached = true;
+    
     return true;
 }
 
-bool APDBViewer::GetAromaticRingCenter(FLigandInfo* LigInfo, FVector& OutCenter, FVector& OutNormal) const
+// OPTIMIZED: Non-const to allow caching
+bool APDBViewer::GetAromaticRingCenter(FLigandInfo* LigInfo, FVector& OutCenter, FVector& OutNormal)
 {
     if (!LigInfo || LigInfo->AtomPositions.Num() < 3)
         return false;
+    
+    // Check cache first
+    if (LigInfo->bAromaticCenterCached)
+    {
+        OutCenter = LigInfo->CachedAromaticCenter;
+        OutNormal = LigInfo->CachedAromaticNormal;
+        return true;
+    }
     
     // Simplified: Use all carbon atoms as potential ring atoms
     TArray<FVector> RingAtoms;
@@ -554,6 +596,11 @@ bool APDBViewer::GetAromaticRingCenter(FLigandInfo* LigInfo, FVector& OutCenter,
     {
         OutNormal = FVector::UpVector;
     }
+    
+    // Cache the results
+    LigInfo->CachedAromaticCenter = OutCenter;
+    LigInfo->CachedAromaticNormal = OutNormal;
+    LigInfo->bAromaticCenterCached = true;
     
     return true;
 }

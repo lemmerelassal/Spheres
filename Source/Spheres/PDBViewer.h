@@ -92,6 +92,13 @@ struct FResidueInfo
     TArray<TPair<int32, int32>> BondPairs;
     TArray<int32> BondOrders;
     bool bIsVisible = true;
+    
+    // OPTIMIZED: Cached data
+    FVector CachedCenterOfMass;
+    bool bCenterOfMassCached = false;
+    FVector CachedAromaticCenter;
+    FVector CachedAromaticNormal;
+    bool bAromaticCenterCached = false;
 };
 
 USTRUCT()
@@ -106,6 +113,13 @@ struct FLigandInfo
     TArray<TPair<int32, int32>> BondPairs; // Store bond connectivity
     TArray<int32> BondOrders; // Bond order for each bond (aligned with BondPairs)
     bool bIsVisible = false;
+    
+    // OPTIMIZED: Cached data
+    FVector CachedCenterOfMass;
+    bool bCenterOfMassCached = false;
+    FVector CachedAromaticCenter;
+    FVector CachedAromaticNormal;
+    bool bAromaticCenterCached = false;
 };
 
 // TreeView Node Object (must be UObject for TreeView)
@@ -398,13 +412,13 @@ protected:
     // Helper: Calculate angle between three points (degrees)
     float CalculateAngle(const FVector& A, const FVector& B, const FVector& C) const;
     
-    // Helper: Get residue center of mass
-    FVector GetResidueCenterOfMass(FResidueInfo* ResInfo) const;
-    FVector GetLigandCenterOfMass(FLigandInfo* LigInfo) const;
+    // Helper: Get residue center of mass (OPTIMIZED: Non-const for caching)
+    FVector GetResidueCenterOfMass(FResidueInfo* ResInfo);
+    FVector GetLigandCenterOfMass(FLigandInfo* LigInfo);
     
-    // Helper: Get aromatic ring center for residue
-    bool GetAromaticRingCenter(FResidueInfo* ResInfo, FVector& OutCenter, FVector& OutNormal) const;
-    bool GetAromaticRingCenter(FLigandInfo* LigInfo, FVector& OutCenter, FVector& OutNormal) const;
+    // Helper: Get aromatic ring center for residue (OPTIMIZED: Non-const for caching)
+    bool GetAromaticRingCenter(FResidueInfo* ResInfo, FVector& OutCenter, FVector& OutNormal);
+    bool GetAromaticRingCenter(FLigandInfo* LigInfo, FVector& OutCenter, FVector& OutNormal);
     
     // Visualize an interaction
     void DrawInteraction(const FMolecularInteraction& Interaction);

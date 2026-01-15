@@ -37,16 +37,50 @@ TArray<FVector> FHydrogenGenerator::GenerateHydrogenPositions(
     // Generate hydrogen positions based on geometry
     if (NumHydrogens == 1)
     {
-        // Single hydrogen - opposite to sum of existing bonds
-        FVector SumDir = FVector::ZeroVector;
-        for (const FVector& Dir : ExistingBondDirs)
-            SumDir += Dir;
-        
-        FVector HDir = -SumDir.GetSafeNormal();
-        if (HDir.SizeSquared() < 0.01f) // If no existing bonds or they cancel
-            HDir = FVector::UpVector;
-        
-        HPositions.Add(ParentPos + HDir * BondLength);
+        // Single hydrogen - geometry depends on element and existing bonds
+        if (ExistingBondDirs.Num() == 1)
+        {
+            FVector V = ExistingBondDirs[0];
+            
+            // For oxygen/sulfur: use bent geometry (like water), not linear
+            if (Element == TEXT("O") || Element == TEXT("S"))
+            {
+                // Bent geometry: ~104.5° for oxygen, ~92° for sulfur
+                float BentAngle = (Element == TEXT("O")) ? 
+                    FMath::DegreesToRadians(104.5f) : FMath::DegreesToRadians(92.0f);
+                
+                // Get perpendicular to create the bent angle
+                FVector Perp = GetPerpendicularVector(V);
+                
+                // Rotate from -V by half the bent angle
+                float HalfAngle = BentAngle / 2.0f;
+                FVector HDir = (-V * FMath::Cos(HalfAngle) + Perp * FMath::Sin(HalfAngle)).GetSafeNormal();
+                
+                HPositions.Add(ParentPos + HDir * BondLength);
+            }
+            else
+            {
+                // For other elements (C, N, etc): use tetrahedral-like geometry
+                // Place at tetrahedral angle from the existing bond
+                FVector Perp = GetPerpendicularVector(V);
+                float TetAngle = FMath::DegreesToRadians(109.471f);
+                FVector HDir = (V * FMath::Cos(TetAngle) + Perp * FMath::Sin(TetAngle)).GetSafeNormal();
+                HPositions.Add(ParentPos + HDir * BondLength);
+            }
+        }
+        else
+        {
+            // Multiple existing bonds - place opposite to sum
+            FVector SumDir = FVector::ZeroVector;
+            for (const FVector& Dir : ExistingBondDirs)
+                SumDir += Dir;
+            
+            FVector HDir = -SumDir.GetSafeNormal();
+            if (HDir.SizeSquared() < 0.01f) // If no existing bonds or they cancel
+                HDir = FVector::UpVector;
+            
+            HPositions.Add(ParentPos + HDir * BondLength);
+        }
     }
     else if (NumHydrogens == 2)
     {
@@ -144,17 +178,35 @@ TArray<FVector> FHydrogenGenerator::GenerateHydrogenPositions(
             else
             {
                 // Carbon or other - use tetrahedral arrangement
-                // This would be something like CH2 in a ring
-                FVector Normal = FVector::CrossProduct(V, Perp).GetSafeNormal();
+                // This would be something like CH2 in a ring or chain
+                // For 1 bond + 2 H: need to place 2 H's at tetrahedral angles from the bond
                 
                 float TetAngle = FMath::DegreesToRadians(109.471f);
-                FVector Base = -V;
                 
-                FQuat Q1 = FQuat(Normal, TetAngle / 2.0f);
-                FQuat Q2 = FQuat(Normal, -TetAngle / 2.0f);
+                // Get perpendicular to the existing bond
+                FVector Perp1 = GetPerpendicularVector(V);
+                FVector Perp2 = FVector::CrossProduct(V, Perp1).GetSafeNormal();
                 
-                HPositions.Add(ParentPos + Q1.RotateVector(Base) * BondLength);
-                HPositions.Add(ParentPos + Q2.RotateVector(Base) * BondLength);
+                // For tetrahedral geometry, when you have 1 bond and need to add 2 hydrogens,
+                // they should be positioned such that all angles are 109.5°
+                // The two hydrogens form a "V" shape that's tilted relative to the existing bond
+                
+                // Place them using a combination of the two perpendicular directions
+                // This creates the proper 3D tetrahedral arrangement
+                float CosTheta = FMath::Cos(TetAngle);
+                float SinTheta = FMath::Sin(TetAngle);
+                
+                // The two hydrogens are at ±109.5° from V, symmetric about a plane
+                // H1 and H2 are rotated 120° apart around V axis (for proper tetrahedral spacing)
+                FVector HDir1 = (V * CosTheta + Perp1 * SinTheta).GetSafeNormal();
+                
+                // Rotate Perp1 by 120° around V to get the second hydrogen direction
+                FQuat RotQuat = FQuat(V, FMath::DegreesToRadians(120.0f));
+                FVector Perp1Rotated = RotQuat.RotateVector(Perp1);
+                FVector HDir2 = (V * CosTheta + Perp1Rotated * SinTheta).GetSafeNormal();
+                
+                HPositions.Add(ParentPos + HDir1 * BondLength);
+                HPositions.Add(ParentPos + HDir2 * BondLength);
             }
         }
         else
@@ -192,22 +244,47 @@ TArray<FVector> FHydrogenGenerator::GenerateHydrogenPositions(
         else
         {
             // CH3 or similar - tetrahedral geometry
-            FVector BaseDir = FVector::UpVector;
             if (ExistingBondDirs.Num() > 0)
-                BaseDir = -ExistingBondDirs[0].GetSafeNormal();
-            
-            FVector Perp1 = FVector::CrossProduct(BaseDir, FVector::RightVector).GetSafeNormal();
-            if (Perp1.SizeSquared() < 0.01f)
-                Perp1 = FVector::CrossProduct(BaseDir, FVector::ForwardVector).GetSafeNormal();
-            
-            float TetAngle = FMath::DegreesToRadians(109.471f);
-            FVector Base = BaseDir.GetSafeNormal();
-            
-            for (int32 i = 0; i < 3; ++i)
             {
-                float RotAngle = i * 120.0f;
-                FVector Rotated = Base.RotateAngleAxis(RotAngle, Perp1);
-                HPositions.Add(ParentPos + Rotated * BondLength);
+                // V points from parent atom to bonded atom (away from CH3)
+                FVector V = ExistingBondDirs[0];
+                FVector Perp = GetPerpendicularVector(V);
+                
+                // The hydrogens should point in same general direction as V, tilted by tetrahedral angle
+                // This creates a tetrahedral arrangement where H's are on same side as the bond
+                float TetAngle = FMath::DegreesToRadians(109.471f);
+                
+                // Rotate perpendicular vector around V axis to get 3 positions at 120° intervals
+                for (int32 i = 0; i < 3; ++i)
+                {
+                    float Angle = (i * 120.0f) * PI / 180.0f;
+                    FQuat Rotation = FQuat(V, Angle);
+                    FVector RotatedPerp = Rotation.RotateVector(Perp);
+                    
+                    // Tilt from V by tetrahedral angle toward the rotated perpendicular direction
+                    FVector HDir = (V * FMath::Cos(TetAngle) + RotatedPerp * FMath::Sin(TetAngle)).GetSafeNormal();
+                    
+                    HPositions.Add(ParentPos + HDir * BondLength);
+                }
+            }
+            else
+            {
+                // No existing bond - use default tetrahedral arrangement
+                FVector BaseDir = FVector::UpVector;
+                FVector Perp = GetPerpendicularVector(BaseDir);
+                
+                float TetAngle = FMath::DegreesToRadians(109.471f);
+                
+                for (int32 i = 0; i < 3; ++i)
+                {
+                    float Angle = (i * 120.0f) * PI / 180.0f;
+                    FQuat Rotation = FQuat(BaseDir, Angle);
+                    FVector RotatedPerp = Rotation.RotateVector(Perp);
+                    
+                    FVector HDir = (BaseDir * FMath::Cos(TetAngle) + RotatedPerp * FMath::Sin(TetAngle)).GetSafeNormal();
+                    
+                    HPositions.Add(ParentPos + HDir * BondLength);
+                }
             }
         }
     }
@@ -455,40 +532,56 @@ TArray<FVector> FHydrogenGenerator::GenerateTetrahedralHydrogens(
         if (Normal.SizeSquared() < KINDA_SMALL_NUMBER)
             Normal = GetPerpendicularVector(V1);
 
-        // Bisector of existing bonds
+        // Bisector of existing bonds (average direction)
         FVector Bisector = (V1 + V2).GetSafeNormal();
+        
+        // For tetrahedral geometry, we want the hydrogens to be placed such that
+        // all 4 bond angles are 109.5°. The hydrogens should be symmetric
+        // about the plane containing the two existing bonds.
+        
+        // Create a vector perpendicular to the bisector, lying in the perpendicular plane
+        FVector PerpendicularInPlane = FVector::CrossProduct(Normal, Bisector).GetSafeNormal();
+        
+        // The angle between the existing bond bisector and the H direction
+        // For perfect tetrahedral: if two bonds are at angle θ apart,
+        // the hydrogens should complete the tetrahedron
+        float ExistingAngle = FMath::Acos(FMath::Clamp(FVector::DotProduct(V1, V2), -1.0f, 1.0f));
+        
+        // For tetrahedral, the angle from -Bisector to each H should be calculated
+        // to maintain 109.5° with the existing bonds
+        // Using the formula: for tetrahedral geometry with 2+2 arrangement
+        float HAngleFromBisector = FMath::Acos((-FMath::Cos(ExistingAngle) - FMath::Cos(TetAngle)) / 
+                                                 (1 + FMath::Cos(ExistingAngle)));
+        
+        // Direction opposite to bisector, then spread the hydrogens
+        FVector BaseDir = -Bisector;
+        
+        // Rotate BaseDir toward the perpendicular by the calculated angle
+        FQuat Q1 = FQuat(PerpendicularInPlane, HAngleFromBisector);
+        FQuat Q2 = FQuat(PerpendicularInPlane, -HAngleFromBisector);
 
-        // Two H's symmetric about the bisector
-        FVector Perp = FVector::CrossProduct(Bisector, Normal).GetSafeNormal();
-        float RotAngle = FMath::Acos(FVector::DotProduct(V1, Bisector));
-        float HalfAngle = (TetAngle - RotAngle) * 0.5f;
-
-        FVector Dir = -Bisector;
-        FQuat Q1 = FQuat(Perp, HalfAngle);
-        FQuat Q2 = FQuat(Perp, -HalfAngle);
-
-        Hydrogens.Add(Center + Q1.RotateVector(Dir) * BondLength);
-        Hydrogens.Add(Center + Q2.RotateVector(Dir) * BondLength);
+        Hydrogens.Add(Center + Q1.RotateVector(BaseDir) * BondLength);
+        Hydrogens.Add(Center + Q2.RotateVector(BaseDir) * BondLength);
     }
     else if (Existing.Num() == 1 && NumH == 3)
     {
         // 1 bond exists, add 3 hydrogens
+        // V points from center to the existing bonded atom
         FVector V = (Existing[0] - Center).GetSafeNormal();
         FVector Perp = GetPerpendicularVector(V);
 
-        // Rotate 120 degrees around the existing bond
+        // The hydrogens should point in same general direction as V, tilted by tetrahedral angle
+        // Rotate perpendicular vector around V axis to get 3 positions at 120° intervals
         for (int32 i = 0; i < 3; ++i)
         {
             float Angle = (i * 120.0f) * PI / 180.0f;
             FQuat Rotation = FQuat(V, Angle);
-            FVector Rotated = Rotation.RotateVector(Perp);
-
-            // Tilt down by tetrahedral angle
-            FVector Cross = FVector::CrossProduct(V, Rotated).GetSafeNormal();
-            FQuat Tilt = FQuat(Cross, PI - TetAngle);
-            FVector Dir = Tilt.RotateVector(V);
-
-            Hydrogens.Add(Center + Dir * BondLength);
+            FVector RotatedPerp = Rotation.RotateVector(Perp);
+            
+            // Tilt from V by tetrahedral angle
+            FVector HDir = (V * FMath::Cos(TetAngle) + RotatedPerp * FMath::Sin(TetAngle)).GetSafeNormal();
+            
+            Hydrogens.Add(Center + HDir * BondLength);
         }
     }
     else if (Existing.Num() == 0 && NumH == 4)

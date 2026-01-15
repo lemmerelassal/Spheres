@@ -75,6 +75,12 @@ void APDBViewer::BeginPlay()
             }
         }
     }
+
+        // Show FPS using built-in stat command
+    if (GEngine && GEngine->GameViewport)
+    {
+        GEngine->GameViewport->ConsoleCommand(TEXT("stat fps"));
+    }
 }
 
 void APDBViewer::OnLigandsLoadedHandler()
