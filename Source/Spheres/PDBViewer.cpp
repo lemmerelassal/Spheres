@@ -1,6 +1,5 @@
-// PDBViewer.cpp – UE 5.6 compatible version with TreeView and SDF support
-// PDBViewer_Interactions.cpp - Molecular Interaction Detection Implementation
-// Add this to your existing PDBViewer.cpp or compile as separate file
+// PDBViewer.cpp – UE 5.6 compatible version with TreeView, SDF support, and Ligand Atom Lighting
+// Modified to include point light components on each ligand atom
 
 #include "Materials/MaterialInstanceDynamic.h"
 
@@ -13,6 +12,7 @@
 #include "Engine/World.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneComponent.h"
+#include "Components/PointLightComponent.h"
 #include "UObject/ConstructorHelpers.h"
 #include "Misc/FileHelper.h"
 #include "HAL/PlatformFilemanager.h"
@@ -48,8 +48,6 @@ APDBViewer::APDBViewer()
     SphereMaterialAsset = Mat.Object;
 }
 
-// In PDBViewer.cpp, modify BeginPlay:
-
 void APDBViewer::BeginPlay()
 {
     Super::BeginPlay();
@@ -76,7 +74,7 @@ void APDBViewer::BeginPlay()
         }
     }
 
-        // Show FPS using built-in stat command
+    // Show FPS using built-in stat command
     if (GEngine && GEngine->GameViewport)
     {
         GEngine->GameViewport->ConsoleCommand(TEXT("stat fps"));
@@ -122,11 +120,17 @@ void APDBViewer::OnLigandsLoadedHandler()
             if (bHasH && Info->BondMeshes.IsValidIndex(i))
                 Info->BondMeshes[i]->SetVisibility(bHydrogensVisible && Info->bIsVisible);
         }
+        
+        // ===== NEW: CREATE LIGAND ATOM LIGHTS =====
+        CreateLigandAtomLights(Info);
+        // ==========================================
     }
 
     int32 TotalH = GetHydrogenCount();
+    int32 TotalLights = GetLigandAtomLightCount();
     UE_LOG(LogTemp, Warning, TEXT("Total hydrogens: %d (Visible: %s)"),
            TotalH, bHydrogensVisible ? TEXT("YES") : TEXT("NO"));
+    UE_LOG(LogTemp, Warning, TEXT("Total ligand atom lights: %d"), TotalLights);
 }
 
 void APDBViewer::FetchAndDisplayStructure(const FString &ID)
@@ -1274,10 +1278,35 @@ void APDBViewer::ClearResidueMap()
     ChainIDs.Empty();
 }
 
+
 void APDBViewer::ClearLigandMap()
 {
     for (auto &P : LigandMap)
+    {
+        if (!P.Value)
+            continue;
+        
+        FLigandInfo* Info = P.Value;
+        
+        // Clear existing mesh components
+        for (auto* M : Info->AtomMeshes)
+        {
+            if (M && IsValid(M))
+                M->DestroyComponent();
+        }
+        
+        for (auto* M : Info->BondMeshes)
+        {
+            if (M && IsValid(M))
+                M->DestroyComponent();
+        }
+        
+        // ===== NEW: CLEAR ATOM LIGHTS =====
+        ClearLigandAtomLights(Info);
+        // ==================================
+        
         delete P.Value;
+    }
     LigandMap.Empty();
 }
 
@@ -1644,6 +1673,7 @@ void APDBViewer::PopulateMoleculeListView(UListView *ListView)
     ListView->RegenerateAllEntries();
 }
 
+
 void APDBViewer::ToggleMoleculeVisibility(const FString &MoleculeKey)
 {
     auto **InfoPtr = LigandMap.Find(MoleculeKey);
@@ -1673,6 +1703,10 @@ void APDBViewer::ToggleMoleculeVisibility(const FString &MoleculeKey)
                     for (auto *M : P.Value->BondMeshes)
                         if (M)
                             M->SetVisibility(false);
+                    
+                    // ===== NEW: UPDATE LIGHTS =====
+                    UpdateLigandAtomLights(P.Value);
+                    // ==============================
                 }
             }
         }
@@ -1687,6 +1721,10 @@ void APDBViewer::ToggleMoleculeVisibility(const FString &MoleculeKey)
     for (auto *M : Info->BondMeshes)
         if (M)
             M->SetVisibility(Info->bIsVisible);
+
+    // ===== NEW: UPDATE LIGHTS =====
+    UpdateLigandAtomLights(Info);
+    // ==============================
 
     OnLigandsLoaded.Broadcast();
 }
@@ -1920,4 +1958,198 @@ void APDBViewer::ClearCurrentStructure()
             M->DestroyComponent();
     AllAtomMeshes.Empty();
     AllBondMeshes.Empty();
+}
+// ===== LIGAND ATOM LIGHTING IMPLEMENTATION =====
+
+void APDBViewer::CreateLigandAtomLights(FLigandInfo* LigInfo)
+{
+    if (!LigInfo)
+        return;
+    
+    // Clear any existing lights
+    ClearLigandAtomLights(LigInfo);
+    
+    // Create a light for each atom
+    for (int32 i = 0; i < LigInfo->AtomPositions.Num(); ++i)
+    {
+        UPointLightComponent* Light = NewObject<UPointLightComponent>(this);
+        if (!Light)
+            continue;
+        
+        Light->RegisterComponent();
+        Light->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+        
+        // Set position (scaled to match atom position)
+        FVector ScaledPos = LigInfo->AtomPositions[i] * PDB::SCALE;
+        Light->SetRelativeLocation(ScaledPos);
+        
+        // Set light color based on element
+        FLinearColor LightColor = FLinearColor::White;
+        if (bUseDynamicAtomColors && LigInfo->AtomElements.IsValidIndex(i))
+        {
+            LightColor = GetLightColorForElement(LigInfo->AtomElements[i]);
+        }
+        Light->SetLightColor(LightColor);
+        
+        // Set light properties
+        Light->SetIntensity(LigandAtomLightIntensity);
+        Light->SetAttenuationRadius(LigandAtomLightRadius);
+        Light->SetCastShadows(false); // Disable shadows for performance
+        Light->SetMobility(EComponentMobility::Movable);
+        
+        // Set initial visibility based on ligand visibility and global light setting
+        Light->SetVisibility(bLigandAtomLightsEnabled && LigInfo->bIsVisible);
+        
+        LigInfo->AtomLights.Add(Light);
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Created %d atom lights for ligand %s"), 
+           LigInfo->AtomLights.Num(), *LigInfo->LigandName);
+}
+
+void APDBViewer::UpdateLigandAtomLights(FLigandInfo* LigInfo)
+{
+    if (!LigInfo)
+        return;
+    
+    for (UPointLightComponent* Light : LigInfo->AtomLights)
+    {
+        if (!Light || !IsValid(Light))
+            continue;
+        
+        // Update visibility
+        Light->SetVisibility(bLigandAtomLightsEnabled && LigInfo->bIsVisible);
+        
+        // Update intensity and radius
+        Light->SetIntensity(LigandAtomLightIntensity);
+        Light->SetAttenuationRadius(LigandAtomLightRadius);
+    }
+}
+
+void APDBViewer::ClearLigandAtomLights(FLigandInfo* LigInfo)
+{
+    if (!LigInfo)
+        return;
+    
+    for (UPointLightComponent* Light : LigInfo->AtomLights)
+    {
+        if (Light && IsValid(Light))
+        {
+            Light->DestroyComponent();
+        }
+    }
+    
+    LigInfo->AtomLights.Empty();
+}
+
+FLinearColor APDBViewer::GetLightColorForElement(const FString& Element) const
+{
+    // Use the same color scheme as atoms
+    return GetElementColor(Element);
+}
+
+void APDBViewer::SetLigandAtomLightsEnabled(bool bEnabled)
+{
+    bLigandAtomLightsEnabled = bEnabled;
+    
+    // Update all ligand lights
+    for (auto& Pair : LigandMap)
+    {
+        if (Pair.Value)
+        {
+            UpdateLigandAtomLights(Pair.Value);
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Ligand atom lights %s"), 
+           bEnabled ? TEXT("enabled") : TEXT("disabled"));
+}
+
+void APDBViewer::ToggleLigandAtomLights()
+{
+    SetLigandAtomLightsEnabled(!bLigandAtomLightsEnabled);
+}
+
+void APDBViewer::SetLigandAtomLightIntensity(float Intensity)
+{
+    LigandAtomLightIntensity = Intensity;
+    
+    // Update all existing lights
+    for (auto& Pair : LigandMap)
+    {
+        if (Pair.Value)
+        {
+            for (UPointLightComponent* Light : Pair.Value->AtomLights)
+            {
+                if (Light && IsValid(Light))
+                {
+                    Light->SetIntensity(Intensity);
+                }
+            }
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Set ligand atom light intensity to %.1f"), Intensity);
+}
+
+void APDBViewer::SetLigandAtomLightRadius(float Radius)
+{
+    LigandAtomLightRadius = Radius;
+    
+    // Update all existing lights
+    for (auto& Pair : LigandMap)
+    {
+        if (Pair.Value)
+        {
+            for (UPointLightComponent* Light : Pair.Value->AtomLights)
+            {
+                if (Light && IsValid(Light))
+                {
+                    Light->SetAttenuationRadius(Radius);
+                }
+            }
+        }
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("Set ligand atom light radius to %.1f"), Radius);
+}
+
+int32 APDBViewer::GetLigandAtomLightCount() const
+{
+    int32 Count = 0;
+    
+    for (const auto& Pair : LigandMap)
+    {
+        if (Pair.Value)
+        {
+            Count += Pair.Value->AtomLights.Num();
+        }
+    }
+    
+    return Count;
+}
+
+// ===== MISSING FUNCTION IMPLEMENTATIONS =====
+
+void APDBViewer::LoadPDBFromString(const FString& PDBContent)
+{
+    CurrentPDBContent = PDBContent;
+    ParsePDB(PDBContent);
+}
+
+void APDBViewer::LoadPDB(const FString& PDB_ID)
+{
+    FetchAndDisplayStructure(PDB_ID);
+}
+
+void APDBViewer::ToggleLigandVisibility(const FString& LigandKey)
+{
+    // This is an alias for ToggleMoleculeVisibility
+    ToggleMoleculeVisibility(LigandKey);
+}
+
+void APDBViewer::LoadSDFFromString(const FString& SDFContent)
+{
+    CurrentPDBContent = SDFContent;
+    ParseSDF(SDFContent);
 }

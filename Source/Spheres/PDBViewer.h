@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "Http.h"
 #include "MMGBSA.h"
+#include "Components/PointLightComponent.h"
 #include "PDBViewer.generated.h"
 
 // Interaction type enumeration
@@ -114,6 +115,9 @@ struct FLigandInfo
     TArray<int32> BondOrders; // Bond order for each bond (aligned with BondPairs)
     bool bIsVisible = false;
     
+    // NEW: Light components for each atom
+    TArray<UPointLightComponent*> AtomLights;
+    
     // OPTIMIZED: Cached data
     FVector CachedCenterOfMass;
     bool bCenterOfMassCached = false;
@@ -206,19 +210,19 @@ public:
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void SaveStructureToFile(const FString& FilePath);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void LoadStructureFromFile(const FString& FilePath);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ClearCurrentStructure();
-    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void OpenSaveDialog();
-    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void OpenLoadDialog();
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void LoadPDBFromString(const FString& PDBContent);
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void LoadPDB(const FString& PDB_ID);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleResidueVisibility(const FString& ResidueKey);
-    
-    // New TreeView functions
-    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<UPDBTreeNode*> GetChainNodes();
-    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<UPDBTreeNode*> GetResidueNodesForChain(const FString& ChainID);
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleLigandVisibility(const FString& LigandKey);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleChainVisibility(const FString& ChainID);
-    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleNodeVisibility(UPDBTreeNode* Node);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void PopulateTreeView(class UTreeView* TreeView);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<UObject*> GetChildrenForNode(UPDBTreeNode* Node);
-    
-    // ListView functions for SDF molecules
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<UPDBTreeNode*> GetChainNodes();
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<UPDBTreeNode*> GetResidueNodesForChain(const FString& ChainID);
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleNodeVisibility(UPDBTreeNode* Node);
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void LoadSDFFromString(const FString& SDFContent);
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void OpenSaveDialog();
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void OpenLoadDialog();
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") TArray<UPDBMoleculeNode*> GetMoleculeNodes();
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void PopulateMoleculeListView(class UListView* ListView);
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer") void ToggleMoleculeVisibility(const FString& MoleculeKey);
@@ -234,7 +238,46 @@ public:
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer")
     void ToggleHydrogens();
     
-    // ===== NEW: INTERACTION DETECTION FUNCTIONS =====
+    // ===== NEW: LIGAND ATOM LIGHTING FUNCTIONS =====
+    
+    // Enable/disable ligand atom lights
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Lighting")
+    void SetLigandAtomLightsEnabled(bool bEnabled);
+    
+    // Toggle ligand atom lights on/off
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Lighting")
+    void ToggleLigandAtomLights();
+    
+    // Set light intensity for all ligand atom lights
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Lighting")
+    void SetLigandAtomLightIntensity(float Intensity);
+    
+    // Set light radius for all ligand atom lights
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Lighting")
+    void SetLigandAtomLightRadius(float Radius);
+    
+    // Get whether ligand atom lights are enabled
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Lighting")
+    bool GetLigandAtomLightsEnabled() const { return bLigandAtomLightsEnabled; }
+    
+    // Get total number of ligand atom lights
+    UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Lighting")
+    int32 GetLigandAtomLightCount() const;
+    
+    // Configure lighting parameters
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer|Lighting")
+    bool bLigandAtomLightsEnabled = true;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer|Lighting")
+    float LigandAtomLightIntensity = 5000.0f;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer|Lighting")
+    float LigandAtomLightRadius = 500.0f;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "PDB Viewer|Lighting")
+    bool bUseDynamicAtomColors = true; // Use atom element colors for lights
+    
+    // ===== INTERACTION DETECTION FUNCTIONS =====
     
     // Calculate all molecular interactions
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Interactions")
@@ -374,7 +417,21 @@ protected:
     // Hydrogen generation helpers
     int32 AddHydrogensToLigand(FLigandInfo* LigInfo);
     
-    // ===== NEW: INTERACTION DETECTION HELPERS =====
+    // ===== NEW: LIGAND LIGHTING HELPERS =====
+    
+    // Create lights for all atoms in a ligand
+    void CreateLigandAtomLights(FLigandInfo* LigInfo);
+    
+    // Update light visibility and properties for a ligand
+    void UpdateLigandAtomLights(FLigandInfo* LigInfo);
+    
+    // Clear all lights for a ligand
+    void ClearLigandAtomLights(FLigandInfo* LigInfo);
+    
+    // Get light color based on element
+    FLinearColor GetLightColorForElement(const FString& Element) const;
+    
+    // ===== INTERACTION DETECTION HELPERS =====
     
     // Detect hydrogen bonds
     void DetectHydrogenBonds(bool bProteinProtein, bool bProteinLigand);

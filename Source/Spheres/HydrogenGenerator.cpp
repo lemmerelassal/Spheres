@@ -120,17 +120,34 @@ TArray<FVector> FHydrogenGenerator::GenerateHydrogenPositions(
             }
             else
             {
-                // Carbon or other - tetrahedral
-                FVector SumDir = (ExistingBondDirs[0] + ExistingBondDirs[1]).GetSafeNormal();
-                FVector Perp = FVector::CrossProduct(ExistingBondDirs[0], ExistingBondDirs[1]).GetSafeNormal();
+                // Carbon or other - tetrahedral CH2
+                FVector V1 = ExistingBondDirs[0];
+                FVector V2 = ExistingBondDirs[1];
                 
-                if (Perp.SizeSquared() < 0.01f)
-                    Perp = FVector::UpVector;
+                // Get perpendicular to the R-C-R plane
+                FVector Normal = FVector::CrossProduct(V1, V2).GetSafeNormal();
                 
-                FVector Base = -SumDir.GetSafeNormal();
+                if (Normal.SizeSquared() < 0.01f)
+                    Normal = FVector::UpVector;
                 
-                HPositions.Add(ParentPos + (Base.RotateAngleAxis(60.0f, Perp)).GetSafeNormal() * BondLength);
-                HPositions.Add(ParentPos + (Base.RotateAngleAxis(-60.0f, Perp)).GetSafeNormal() * BondLength);
+                // Use the mathematical solution for tetrahedral geometry
+                // Each H must make 109.5° with both R groups
+                float cosTheta = FVector::DotProduct(V1, V2);
+                const float cosTet = -1.0f / 3.0f;  // cos(109.47°)
+                
+                // Weight for V1+V2 component
+                float a = cosTet / (1.0f + cosTheta);
+                
+                // Weight for Normal component (perpendicular to plane)
+                float c_squared = 1.0f - a * a * (2.0f + 2.0f * cosTheta);
+                float c = FMath::Sqrt(FMath::Max(0.0f, c_squared));
+                
+                // Create hydrogen directions
+                FVector HDir1 = (a * (V1 + V2) + c * Normal).GetSafeNormal();
+                FVector HDir2 = (a * (V1 + V2) - c * Normal).GetSafeNormal();
+                
+                HPositions.Add(ParentPos + HDir1 * BondLength);
+                HPositions.Add(ParentPos + HDir2 * BondLength);
             }
         }
         else if (ExistingBondDirs.Num() == 1)
