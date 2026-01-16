@@ -344,12 +344,7 @@ public:
     TMap<FString, FLigandInfo*> LigandMap;
     TMap<FString, FResidueInfo*> ResidueMap;
 
-    // Optional MD control widget class that will be spawned on BeginPlay if set
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "UI")
-    TSubclassOf<class UMDControlWidget> MDControlWidgetClass;
-
-    UPROPERTY()
-    class UMDControlWidget* MDControlWidgetInstance;
+    
 
 /*     // Debug: highlight severe overlaps found by MMGBSA
     UFUNCTION(BlueprintCallable, Category = "PDB Viewer|Debug")

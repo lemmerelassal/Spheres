@@ -617,49 +617,45 @@ float APDBViewer::CalculateAngle(const FVector& A, const FVector& B, const FVect
 
 void APDBViewer::DrawInteraction(const FMolecularInteraction& Interaction)
 {
-    if (!CylinderMeshAsset || !SphereMaterialAsset)
+    if (!SphereMeshAsset || !SphereMaterialAsset)
         return;
     
     // Scale positions for rendering
     FVector Start = Interaction.Position1 * PDB::SCALE;
     FVector End = Interaction.Position2 * PDB::SCALE;
     
-    FVector MidPoint = (Start + End) * 0.5f;
     FVector Direction = End - Start;
     float Length = Direction.Size();
     
     if (Length < 0.1f)
         return;
     
-    // Create dashed line effect (3 segments with gaps)
-    int32 NumSegments = 5;
-    float SegmentLength = Length / (NumSegments * 2 - 1);
+    // Create dashed line effect using spheres (5 spheres with gaps)
+    int32 NumSpheres = 5;
+    float SegmentLength = Length / (NumSpheres * 2 - 1);
     
-    for (int32 i = 0; i < NumSegments; ++i)
+    for (int32 i = 0; i < NumSpheres; ++i)
     {
-        FVector SegStart = Start + Direction.GetSafeNormal() * (i * 2 * SegmentLength);
-        FVector SegEnd = SegStart + Direction.GetSafeNormal() * SegmentLength;
+        // Calculate sphere position along the interaction line
+        FVector SpherePos = Start + Direction.GetSafeNormal() * (i * 2 * SegmentLength + SegmentLength * 0.5f);
         
-        UStaticMeshComponent* Line = NewObject<UStaticMeshComponent>(this);
-        Line->SetStaticMesh(CylinderMeshAsset);
-        Line->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
-        Line->RegisterComponent();
+        // Create sphere component
+        UStaticMeshComponent* Sphere = NewObject<UStaticMeshComponent>(this);
+        Sphere->SetStaticMesh(SphereMeshAsset);
+        Sphere->AttachToComponent(RootComponent, FAttachmentTransformRules::KeepRelativeTransform);
+        Sphere->RegisterComponent();
         
-        FVector SegMidPoint = (SegStart + SegEnd) * 0.5f;
-        FVector SegDirection = SegEnd - SegStart;
-        float SegLen = SegDirection.Size();
-        
-        Line->SetWorldLocation(SegMidPoint);
-        Line->SetWorldRotation(SegDirection.Rotation());
-        Line->SetWorldScale3D(FVector(0.05f, 0.05f, SegLen / 100.0f));
+        // Position and scale the sphere
+        Sphere->SetWorldLocation(SpherePos);
+        Sphere->SetWorldScale3D(FVector(0.15f)); // Small sphere size
         
         // Create material and set color
-        UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, Line);
+        UMaterialInstanceDynamic* Mat = UMaterialInstanceDynamic::Create(SphereMaterialAsset, Sphere);
         FLinearColor Color = GetInteractionColor(Interaction.Type);
         Mat->SetVectorParameterValue(TEXT("Color"), Color);
-        Line->SetMaterial(0, Mat);
+        Sphere->SetMaterial(0, Mat);
         
-        InteractionMeshes.Add(Line);
+        InteractionMeshes.Add(Sphere);
     }
 }
 

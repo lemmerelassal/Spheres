@@ -23,7 +23,6 @@
 #include "Components/TreeView.h"
 #include "Components/ListView.h"
 #include "Kismet/GameplayStatics.h"
-#include "MDControlWidget.h"
 #include "HydrogenGenerator.h"
 
 namespace PDB
@@ -60,20 +59,7 @@ void APDBViewer::BeginPlay()
     if (auto *Cam = GetWorld()->SpawnActor<APDBCameraComponent>(APDBCameraComponent::StaticClass(), GetActorLocation(), FRotator::ZeroRotator))
         Cam->SetTargetActor(this);
 
-    if (MDControlWidgetClass)
-    {
-        APlayerController *PC = UGameplayStatics::GetPlayerController(GetWorld(), 0);
-        if (PC)
-        {
-            MDControlWidgetInstance = CreateWidget<UMDControlWidget>(PC, MDControlWidgetClass);
-            if (MDControlWidgetInstance)
-            {
-                MDControlWidgetInstance->AddToViewport();
-                UE_LOG(LogTemp, Log, TEXT("PDBViewer: MD control widget added to viewport"));
-            }
-        }
-    }
-
+        
     // Show FPS using built-in stat command
     if (GEngine && GEngine->GameViewport)
     {

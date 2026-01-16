@@ -16,19 +16,23 @@ public class Spheres : ModuleRules
 		}
 
 		// Public dependencies for the game (and editor)
-		PublicDependencyModuleNames.AddRange(new string[] 
+		PublicDependencyModuleNames.AddRange(new string[]
 		{
-			"Core", 
-			"CoreUObject", 
-			"Engine", 
-			"InputCore",  
+			"Core",
+			"CoreUObject",
+			"Engine",
+			"InputCore",
 			"EnhancedInput",
 			"Json",
 			"JsonUtilities",
 			"Slate",       // Slate module for UI elements like SButton
 			"SlateCore",   // Core functionality for Slate widgets
 			"UMG",         // If you're using UMG, keep it
-			"HTTP"
+			"HTTP",
+			"RHI",              // Required for GPU
+		    "RHICore",          // Required for GPU
+    		"RenderCore",       // Required for GPU
+    		"Renderer"          // Required for GPU
 		});
 
 		// Private dependencies for your custom modules (like Eigen)
